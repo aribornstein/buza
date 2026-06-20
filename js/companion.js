@@ -146,6 +146,11 @@ async function initClient() {
     speaker = new Speaker();
   } catch (e) { console.warn('Speech synthesis unavailable:', e); }
 
+  // iOS Safari blocks speech until it's first triggered inside a user gesture.
+  // Unlock on the very first tap (e.g. the pairing button) so later replies talk.
+  const unlockTTS = () => { speaker?.unlock(); window.removeEventListener('pointerdown', unlockTTS); };
+  window.addEventListener('pointerdown', unlockTTS);
+
   // 3) Accept the gateway's answer.
   $('apply-remote').addEventListener('click', async () => {
     const blob = $('remote-blob').value.trim();

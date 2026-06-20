@@ -26,6 +26,18 @@ export class Speaker {
 
   get hasArabicVoice() { return !!this.voice; }
 
+  // iOS Safari (and some others) refuse to speak unless speechSynthesis was
+  // first invoked from inside a user gesture. Call this from a tap/click once so
+  // later network-triggered replies are allowed to play.
+  unlock() {
+    try {
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(' ');
+      u.volume = 0;
+      speechSynthesis.speak(u);
+    } catch { /* noop */ }
+  }
+
   // Speaks `text`. Callbacks: onStart, onBoundary (per word), onEnd.
   async speak(text, { onStart, onBoundary, onEnd } = {}) {
     await this.ready;
