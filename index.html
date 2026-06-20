@@ -18,6 +18,32 @@
   </script>
 </head>
 <body>
+  <!-- ===== Startup: choose where the AI runs ===== -->
+  <div id="mode-picker">
+    <div class="picker-card">
+      <h2 dir="rtl">مُعلّم · Palestinian Arabic Tutor</h2>
+      <p class="picker-sub">Where should the AI run?</p>
+      <div class="picker-options">
+        <button type="button" class="picker-opt" id="opt-local">
+          <span class="opt-icon">💻</span>
+          <span class="opt-title">Run on this device</span>
+          <span class="opt-desc">Everything runs locally in your browser. Needs WebGPU and a capable GPU.</span>
+        </button>
+        <button type="button" class="picker-opt" id="opt-client">
+          <span class="opt-icon">📲</span>
+          <span class="opt-title">Use a companion device</span>
+          <span class="opt-desc">Offload the AI to a nearby phone and use this device as a light client.</span>
+        </button>
+        <button type="button" class="picker-opt" id="opt-gateway">
+          <span class="opt-icon">🧠</span>
+          <span class="opt-title">Be the companion</span>
+          <span class="opt-desc">Run the AI on this device for a nearby headset or laptop.</span>
+        </button>
+      </div>
+      <p class="picker-foot">You can change this anytime by reloading the page.</p>
+    </div>
+  </div>
+
   <div id="app">
     <!-- ===== Avatar stage ===== -->
     <section id="stage">

@@ -86,6 +86,39 @@ html, body {
 #progress-bar { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent-2), var(--accent)); transition: width 0.25s; }
 .loader-detail { margin: 12px 0 0; color: var(--muted); font-size: 12px; min-height: 16px; }
 
+/* ===== Startup mode picker ===== */
+#mode-picker {
+  position: fixed; inset: 0; z-index: 50;
+  display: grid; place-items: center;
+  background: rgba(8, 11, 20, 0.85);
+  backdrop-filter: blur(8px);
+  padding: 24px;
+}
+#mode-picker.hidden { display: none; }
+.picker-card {
+  width: min(720px, 100%);
+  padding: 30px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  text-align: center;
+}
+.picker-card h2 { margin: 0 0 4px; font-size: 22px; }
+.picker-sub { margin: 0 0 22px; color: var(--muted); }
+.picker-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
+.picker-opt {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+  text-align: left; padding: 18px;
+  background: #0c1322; color: var(--text);
+  border: 1px solid var(--line); border-radius: 12px;
+  cursor: pointer; transition: border-color 0.15s, transform 0.15s, background 0.15s;
+}
+.picker-opt:hover { border-color: var(--accent); transform: translateY(-2px); background: #0e1830; }
+.picker-opt .opt-icon { font-size: 26px; }
+.picker-opt .opt-title { font-weight: 600; font-size: 15px; }
+.picker-opt .opt-desc { color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+.picker-foot { margin: 22px 0 0; color: var(--muted); font-size: 12px; }
+
 /* ===== Panel ===== */
 #panel {
   display: flex; flex-direction: column;

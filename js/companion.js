@@ -13,10 +13,14 @@ import { SonicLink } from './sonic.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
-const role = params.get('role') === 'gateway' ? 'gateway' : 'client';
+const roleParam = params.get('role');
+const hasRole = roleParam === 'gateway' || roleParam === 'client';
+const role = roleParam === 'gateway' ? 'gateway' : 'client';
 
-document.body.dataset.role = role;
-$('role-badge').textContent = role === 'gateway' ? 'Gateway · iPhone' : 'Client · Quest';
+if (hasRole) {
+  document.body.dataset.role = role;
+  $('role-badge').textContent = role === 'gateway' ? 'Gateway · iPhone' : 'Client · Quest';
+}
 
 // Data-over-sound pairing — shared across roles. Lets the iPhone + Quest swap
 // the WebRTC handshake acoustically (no server, no QR/camera, no typing).
@@ -327,7 +331,14 @@ async function initGateway() {
 }
 
 // ---------- boot ----------
-(role === 'gateway' ? initGateway : initClient)().catch((e) => {
-  console.error(e);
-  setConn('error: ' + (e?.message || e));
-});
+if (!hasRole) {
+  // Opened without a role → let the user pick one cleanly.
+  $('role-picker').classList.remove('hidden');
+  $('pick-gateway').addEventListener('click', () => { location.search = '?role=gateway'; });
+  $('pick-client').addEventListener('click', () => { location.search = '?role=client'; });
+} else {
+  (role === 'gateway' ? initGateway : initClient)().catch((e) => {
+    console.error(e);
+    setConn('error: ' + (e?.message || e));
+  });
+}

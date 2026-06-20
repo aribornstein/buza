@@ -222,4 +222,17 @@ dialectSelect.addEventListener('change', () => {
 
 speakToggle.addEventListener('change', () => { if (!speakToggle.checked) speaker.stop(); });
 
-setStatus('idle', 'Click “Load tutor” to begin');
+// ----- Startup mode picker: run locally or offload to a companion device -----
+const modePicker = $('mode-picker');
+$('opt-local').addEventListener('click', () => {
+  modePicker.classList.add('hidden');
+  loadEverything();
+});
+$('opt-client').addEventListener('click', () => {
+  location.href = './companion.html?role=client';
+});
+$('opt-gateway').addEventListener('click', () => {
+  location.href = './companion.html?role=gateway';
+});
+
+setStatus('idle', 'Choose where the AI runs to begin');

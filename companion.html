@@ -57,9 +57,34 @@
     body[data-role="gateway"] .gw-only { display: block; }
     body[data-role="client"] .client-only { display: block; }
     #gw-status { font-size: 14px; margin-top: 8px; }
+
+    /* role picker (shown when opened without ?role=) */
+    #role-picker { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(8,11,20,.85); backdrop-filter: blur(8px); padding: 24px; }
+    #role-picker.hidden { display: none; }
   </style>
 </head>
 <body data-role="client">
+  <!-- Shown only when companion.html is opened without ?role= -->
+  <div id="role-picker" class="hidden">
+    <div class="picker-card">
+      <h2 dir="rtl">مُعلّم · Companion mode</h2>
+      <p class="picker-sub">Which role is this device?</p>
+      <div class="picker-options">
+        <button type="button" class="picker-opt" id="pick-gateway">
+          <span class="opt-icon">🧠</span>
+          <span class="opt-title">Gateway · runs the AI</span>
+          <span class="opt-desc">Runs Whisper + Gemma and streams replies. Use your most powerful device (e.g. iPhone).</span>
+        </button>
+        <button type="button" class="picker-opt" id="pick-client">
+          <span class="opt-icon">📲</span>
+          <span class="opt-title">Client · thin device</span>
+          <span class="opt-desc">Mic, avatar and UI only — no heavy compute. Use your headset or laptop.</span>
+        </button>
+      </div>
+      <p class="picker-foot">Then pair the two devices by sound, QR, or paste.</p>
+    </div>
+  </div>
+
   <div id="companion">
     <div class="bar">
       <span id="role-badge">…</span>
