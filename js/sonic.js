@@ -1,5 +1,5 @@
 // sonic.js — Data-over-sound transport for the WebRTC handshake, so two nearby
-// devices (iPhone + Quest) can pair with NO server, NO camera/QR, NO typing,
+// devices (the gateway + the client) can pair with NO server, NO camera/QR, NO typing,
 // and NO third device. The only shared medium is air: each has a mic + speaker.
 //
 // We carry the (gzip-compressed) SDP blob as audio using ggwave (vendored,

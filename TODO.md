@@ -14,7 +14,7 @@ A prioritized list of features, fixes, and polish for the Palestinian Arabic Tut
 
 ## 🔴 Companion mode (WebRTC + sound)
 
-- [ ] **Real-device test pass** — validate `sonic.js` pairing on iPhone ↔ Quest over a hotspot LAN (blocked locally by sandbox mic/mDNS).
+- [ ] **Real-device test pass** — validate `sonic.js` pairing on the gateway device ↔ client device over a hotspot LAN (blocked locally by sandbox mic/mDNS).
 - [ ] **PWA / offline install** — add a service worker + manifest so the app keeps a secure context and runs offline on the go (required for iOS Safari mic over hotspot).
 - [x] **SDP compaction** — strip the SDP to ufrag/pwd/fingerprint/candidate and rebuild from a template (`js/sdp.js`) so the handshake is ~130 bytes (2 sound chunks instead of ~11). Done.
 - [ ] **Pairing progress UI** — show chunk-reassembly progress and a clear "listening / emitting / connected" state machine during sonic pairing.
@@ -58,4 +58,4 @@ A prioritized list of features, fixes, and polish for the Palestinian Arabic Tut
 - [ ] **Offline-first bundle** — vendor all CDN libraries locally so the app has zero network dependencies after first load.
 - [ ] **Shared sessions** — export/import a conversation, or share a phrase set via a link/QR.
 - [ ] **Gamification** — streaks, daily phrases, and progress tracking.
-- [ ] **Native iPhone gateway** — a small native app exposing a local server over Personal Hotspot, removing WebRTC signaling entirely for the most robust on-the-go path.
+- [ ] **Native gateway app** — a small native app exposing a local server over Personal Hotspot, removing WebRTC signaling entirely for the most robust on-the-go path.

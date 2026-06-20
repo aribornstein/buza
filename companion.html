@@ -65,7 +65,7 @@
     body[data-role="client"] .client-only { display: block; }
     #gw-status { font-size: 14px; margin-top: 8px; }
 
-    /* Gateway acts second: it needs the Quest's code FIRST, then shows its reply.
+    /* Gateway acts second: it needs the client device's code FIRST, then shows its reply.
        Put the paste/scan box first and de-emphasise the (empty) reply box. */
     body[data-role="gateway"] .signal-box.theirs { order: -1; }
     body[data-role="gateway"] .signal-box.mine { opacity: .6; }
@@ -85,12 +85,12 @@
         <button type="button" class="picker-opt" id="pick-gateway">
           <span class="opt-icon">🧠</span>
           <span class="opt-title">Gateway · runs the AI</span>
-          <span class="opt-desc">Runs Whisper + Gemma and streams replies. Use your most powerful device (e.g. iPhone).</span>
+          <span class="opt-desc">Runs Whisper + Gemma and streams replies. Use your most powerful device.</span>
         </button>
         <button type="button" class="picker-opt" id="pick-client">
           <span class="opt-icon">📲</span>
           <span class="opt-title">Client · thin device</span>
-          <span class="opt-desc">Mic, avatar and UI only — no heavy compute. Use your headset or laptop.</span>
+          <span class="opt-desc">Mic, avatar and UI only — no heavy compute.</span>
         </button>
       </div>
       <p class="picker-foot">Then pair the two devices by sound, QR, or paste.</p>
@@ -134,7 +134,7 @@
 
     <!-- ===== app (revealed once connected) ===== -->
     <section id="app-panel" class="hidden">
-      <!-- client (Quest) -->
+      <!-- client device -->
       <div class="client-only">
         <div id="avatar-wrap"><canvas id="avatar-canvas"></canvas></div>
         <div id="status-text">Connected.</div>
@@ -152,7 +152,7 @@
       </div>
     </section>
 
-    <!-- gateway (iPhone) status -->
+    <!-- gateway device status -->
     <div class="gw-only">
       <div id="gw-status">Waiting to connect…</div>
     </div>

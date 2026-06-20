@@ -1,8 +1,8 @@
 // companion.js — Drives the WebRTC companion experience for BOTH ends from one
 // codebase, selected by ?role=:
 //
-//   ?role=gateway  → iPhone 17 Pro. Runs Whisper + Gemma-4, streams replies.
-//   ?role=client   → Quest 3 (or any browser). Thin client: mic + avatar + UI.
+//   ?role=gateway  → the gateway device. Runs Whisper + Gemma-4, streams replies.
+//   ?role=client   → the client device (any browser). Thin client: mic + avatar + UI.
 //                    Needs NO WebGPU — all heavy compute lives on the gateway.
 //
 // Signaling is manual (no server): each side shows a compact SDP blob (text +
@@ -20,10 +20,10 @@ const role = roleParam === 'gateway' ? 'gateway' : 'client';
 
 if (hasRole) {
   document.body.dataset.role = role;
-  $('role-badge').textContent = role === 'gateway' ? 'Gateway · iPhone' : 'Client · Quest';
+  $('role-badge').textContent = role === 'gateway' ? 'Gateway device' : 'Client device';
 }
 
-// Data-over-sound pairing — shared across roles. Lets the iPhone + Quest swap
+// Data-over-sound pairing — shared across roles. Lets the two devices swap
 // the WebRTC handshake acoustically (no server, no QR/camera, no typing).
 let sonic = null;
 let sonicTx = null; // client-only: a 2nd link so transmitting never disrupts the listening decoder
@@ -49,9 +49,11 @@ function sonicReset() {
 // turnaround), so we add a generous margin.
 function arqRto(link) { return link.airtimeMs(1) + 2500; }
 
+const mbStr = (n) => (typeof n === 'number' ? (n / 1048576).toFixed(0) + 'MB' : '?');
+
 // Re-encode a recorded clip into a 16 kHz mono WAV. The client records WebM/Opus
-// (Quest/Chrome), which iOS Safari — the gateway running Whisper — cannot decode.
-// Decoding happens here, in the browser that produced the clip, and the WAV we
+// (e.g. on Chrome), which some gateway browsers (notably iOS Safari) cannot
+// decode. Decoding happens here, in the browser that produced the clip, and the WAV we
 // emit decodes cleanly everywhere.
 async function blobToWav16k(blob) {
   const SR = 16000;
@@ -135,7 +137,7 @@ $('copy-local').addEventListener('click', async () => {
   setTimeout(() => ($('copy-local').textContent = 'Copy'), 1200);
 });
 
-// Optional camera-based QR scanner (works where camera is granted — e.g. iPhone).
+// Optional camera-based QR scanner (works where camera is granted).
 $('scan-btn').addEventListener('click', startScan);
 async function startScan() {
   const video = $('scan-video');
@@ -168,7 +170,7 @@ async function startScan() {
   }
 }
 
-// ============================================================ CLIENT (Quest)
+// ============================================================ CLIENT (client device)
 async function initClient() {
   const peer = new RTCPeer({ initiator: true });
   let currentEl = null;
@@ -183,7 +185,7 @@ async function initClient() {
   try {
     offerBlob = await peer.createOffer();
     showLocalSignal(offerBlob);
-    $('signal-title').textContent = '1) Show this to the iPhone  ·  2) paste its reply below';
+    $('signal-title').textContent = '1) Show this to the gateway device  ·  2) paste its reply below';
   } catch (e) {
     setConn('error generating code');
     $('signal-title').textContent = 'Could not generate a pairing code — ' + (e?.message || e);
@@ -240,13 +242,13 @@ async function initClient() {
         if (received || connected) return;
         try {
           await peer.acceptAnswer(packedToBlob(payload));
-          received = true; setProgress(1); setSound('Heard the iPhone — connecting…'); setConn('connecting…');
+          received = true; setProgress(1); setSound('Heard the gateway — connecting…'); setConn('connecting…');
         } catch { /* not a valid answer; keep listening */ }
       };
       await sonic.startListening((raw) => arq.feed(raw), ({ fraction, receivedBytes, totalBytes }) => {
         if (received || connected) return;
         setProgress(fraction);
-        setSound(totalBytes ? `Hearing the iPhone’s reply… ${receivedBytes}/${totalBytes} B` : 'Listening for the iPhone…');
+        setSound(totalBytes ? `Hearing the gateway’s reply… ${receivedBytes}/${totalBytes} B` : 'Listening for the gateway…');
       });
       setSound('Hold the phone close — pairing over sound…');
       const sent = await arq.deliver(blobToPacked(offerBlob), ({ fraction, sentBytes, totalBytes }) => {
@@ -255,9 +257,9 @@ async function initClient() {
       if (!sent && !received && !connected) {
         setProgress(null); setSound('No reply heard — move the phone closer and tap again.'); return;
       }
-      // Offer acknowledged: the iPhone now owns the channel. Just listen for the
+      // Offer acknowledged: the gateway now owns the channel. Just listen for the
       // answer (the ARQ delivers + auto-ACKs it via arq.onData above).
-      setProgress(0); setSound('iPhone got the code — listening for its reply…');
+      setProgress(0); setSound('Gateway got the code — listening for its reply…');
       await waitUntil(() => received || connected, 40000);
       if (!received && !connected) setSound('No reply heard — move the phone closer and tap again.');
     } catch (e) { setProgress(null); setSound('Microphone/audio blocked: ' + (e?.message || e)); }
@@ -333,11 +335,11 @@ async function initClient() {
     recorder.stop(); await done;
     stream.getTracks().forEach((t) => t.stop());
     const blob = new Blob(chunks, { type: recorder.mimeType });
-    recorder = null; micBtn.classList.remove('recording'); setStatus('Transcribing on iPhone…');
+    recorder = null; micBtn.classList.remove('recording'); setStatus('Transcribing on the gateway…');
     peer.send({ type: 'dialect', value: $('dialect-select').value });
-    // The Quest/Chrome records WebM/Opus, which iOS Safari (the gateway) cannot
-    // decode. Re-encode here — where the recording can be decoded — into a
-    // 16 kHz mono WAV that Whisper-on-Safari reads cleanly.
+    // The client (e.g. Chrome) records WebM/Opus, which some gateway browsers
+    // (notably iOS Safari) cannot decode. Re-encode here — where the recording
+    // can be decoded — into a 16 kHz mono WAV that Whisper reads cleanly.
     let outBlob = blob;
     try { outBlob = await blobToWav16k(blob); }
     catch (e) { console.warn('WAV transcode failed, sending raw clip:', e); }
@@ -369,11 +371,11 @@ async function initClient() {
   }
 }
 
-// ============================================================ GATEWAY (iPhone)
+// ============================================================ GATEWAY (gateway device)
 async function initGateway() {
-  $('signal-title').textContent = '1) Scan / paste the Quest\u2019s code  ·  2) show your reply back';
+  $('signal-title').textContent = '1) Scan / paste the client device\u2019s code  ·  2) show your reply back';
   $('apply-remote').textContent = 'Generate reply code';
-  $('local-blob').placeholder = 'Your reply code appears here after you load the Quest’s code.';
+  $('local-blob').placeholder = 'Your reply code appears here after you load the client device’s code.';
 
   const peer = new RTCPeer({ initiator: false });
   let busy = false;
@@ -387,25 +389,25 @@ async function initGateway() {
   function log(t) { $('gw-status').textContent = t; }
   function toClient(text) { peer.send({ type: 'status', text }); }
 
-  // Answer the Quest's offer.
+  // Answer the client device's offer.
   $('apply-remote').addEventListener('click', async () => {
     const blob = $('remote-blob').value.trim();
     if (!blob) return;
     try {
       const answer = await peer.createAnswer(blob);
       showLocalSignal(answer);
-      $('signal-title').textContent = 'Show / send this reply code to the Quest';
+      $('signal-title').textContent = 'Show / send this reply code to the client device';
       setConn('connecting…');
     } catch (e) { setConn('bad code'); console.error(e); }
   });
 
-  // Or pair over sound: listen for the Quest's offer, then emit our answer on a
+  // Or pair over sound: listen for the client's offer, then emit our answer on a
   // loop until WebRTC opens. We stop listening once we have the offer so our own
   // answer chirp doesn't collide with itself on the mic.
   // Or pair over sound, reliably, using Stop-and-Wait ARQ. The gateway is the
-  // ARQ responder: it listens for the Quest's offer (auto-ACKing it — that ACK
-  // is what tells the Quest to stop transmitting), builds the answer, then
-  // delivers the answer (retransmitting until the Quest ACKs).
+  // ARQ responder: it listens for the client's offer (auto-ACKing it — that ACK
+  // is what tells the client to stop transmitting), builds the answer, then
+  // delivers the answer (retransmitting until the client ACKs).
   $('sound-btn').addEventListener('click', async () => {
     sonicReset();
     // The gateway listens on `sonic` and transmits on a separate `sonicTx`.
@@ -416,7 +418,7 @@ async function initGateway() {
       await sonic.init();
       await sonicTx.init();
       const arq = new StopWaitARQ({ send: (b, p) => sonicTx.send(b, p), role: 1, rtoMs: arqRto(sonicTx) });
-      arq.onData = async (payload) => { // the Quest's offer arrived (and was auto-ACKed)
+      arq.onData = async (payload) => { // the client's offer arrived (and was auto-ACKed)
         if (handled || connected) return;
         handled = true;
         try {
@@ -426,13 +428,13 @@ async function initGateway() {
           const ok = await arq.deliver(blobToPacked(answer), ({ fraction, sentBytes, totalBytes }) => {
             if (!connected) { setProgress(fraction); setSound(`Replying over sound… ${sentBytes}/${totalBytes} B`); }
           });
-          if (!ok && !connected) setSound('Quest didn’t confirm the reply — move it closer and try again.');
+          if (!ok && !connected) setSound('Client device didn’t confirm the reply — move it closer and try again.');
         } catch (e) { handled = false; setSound('Couldn’t build a reply: ' + (e?.message || e)); }
       };
       await sonic.startListening((raw) => arq.feed(raw), ({ fraction, receivedBytes, totalBytes }) => {
-        if (!handled && !connected) { setProgress(fraction); setSound(totalBytes ? `Hearing the Quest’s code… ${receivedBytes}/${totalBytes} B` : 'Listening for the Quest…'); }
+        if (!handled && !connected) { setProgress(fraction); setSound(totalBytes ? `Hearing the client device’s code… ${receivedBytes}/${totalBytes} B` : 'Listening for the client device…'); }
       });
-      setSound('Hold the phone close to the headset. Listening for the Quest…');
+      setSound('Hold the two devices close together. Listening for the client device…');
     } catch (e) { setProgress(null); setSound('Microphone/audio blocked: ' + (e?.message || e)); }
   });
 
@@ -444,23 +446,43 @@ async function initGateway() {
     setSound('Paired ✓');
     try { sonic?.destroy(); } catch { /* noop */ }
     try { sonicTx?.destroy(); } catch { /* noop */ }
-    toClient('Loading models on iPhone…');
+    toClient('Loading models on the gateway…');
     log('Loading Whisper + Gemma-4…');
+    // On-device WebGPU diagnostics: surfaces device-lost / OOM reasons and a
+    // crash trail that survives an iOS tab reload (no DevTools needed).
+    let diag = { emit() {}, stage() {} };
     try {
+      const { installGpuDiagnostics, probeWebGPU } = await import('./gpu-diag.js');
+      diag = installGpuDiagnostics({ showPanel: true });
+      diag.stage('probe WebGPU');
+      await probeWebGPU(diag.emit);
+    } catch (e) { console.warn('diag unavailable', e); }
+    try {
+      diag.stage('import @huggingface/transformers');
       const { env } = await import('@huggingface/transformers');
       env.backends.onnx.wasm.numThreads = 1; // Whisper (ORT) without SharedArrayBuffer
+      diag.stage('import llm.js + asr.js');
       const { Tutor } = await import('./llm.js');
       const { SpeechToText } = await import('./asr.js');
       tutor = new Tutor();
       stt = new SpeechToText();
+      diag.stage('load Whisper');
       await stt.load(() => {});
+      diag.stage('load Gemma-4 weights + warmup');
       await tutor.load((p) => {
-        if (p.status === 'progress') log(`Loading Gemma-4 — ${(p.progress || 0).toFixed(0)}%`);
+        if (p.status === 'progress') {
+          const pct = (p.progress || 0).toFixed(0);
+          log(`Loading Gemma-4 — ${pct}%`);
+          if (p.totalBytes) diag.emit(`weights ${mbStr(p.loadedBytes)} / ${mbStr(p.totalBytes)} (${pct}%)`);
+        }
       });
+      diag.stage('ready');
       log('Ready.'); toClient('Ready — say or type something in Arabic!');
     } catch (e) {
+      diag.emit('LOAD FAILED: ' + (e?.message || e));
+      diag.stage('FAILED');
       log('Model load failed: ' + (e?.message || e));
-      toClient('Gateway failed to load the model — see iPhone.');
+      toClient('Gateway failed to load the model — see the gateway device.');
       console.error(e);
     }
   });
@@ -469,12 +491,12 @@ async function initGateway() {
   peer.on('control', async (m) => {
     if (m.type === 'dialect') { tutor?.setDialect(m.value); }
     else if (m.type === 'text') {
-      if (!tutor) { toClient('Still loading the model on the iPhone…'); return; }
+      if (!tutor) { toClient('Still loading the model on the gateway…'); return; }
       tutor.setDialect(m.dialect || tutor.dialect); await respond(m.text);
     }
   });
   peer.on('audio', async (blob) => {
-    if (!stt) { toClient('Still loading the model on the iPhone…'); return; }
+    if (!stt) { toClient('Still loading the model on the gateway…'); return; }
     log('Transcribing…');
     const text = await stt.transcribeBlob(blob);
     if (!text) { toClient('Didn\u2019t catch that — try again.'); return; }

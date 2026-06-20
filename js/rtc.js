@@ -1,7 +1,7 @@
 // rtc.js — A tiny, server-less WebRTC peer for the companion gateway.
 //
 // Transport is DATA-CHANNEL ONLY (no media tracks), so neither side needs camera
-// negotiation and the Quest client needs no WebGPU at all — the iPhone gateway
+// negotiation and the client device needs no WebGPU at all — the gateway device
 // does every heavy thing (Whisper + Gemma) and streams text back.
 //
 // Two channels:
@@ -146,7 +146,7 @@ export class RTCPeer {
     // 'complete' (and may stall on the STUN srflx candidate). So we resolve on
     // ANY of: gathering complete, end-of-candidates (null icecandidate), or a
     // short timeout — emitting whatever candidates we have. Host/mDNS candidates
-    // alone are enough on the same LAN (e.g. an iPhone hotspot).
+    // alone are enough on the same LAN (e.g. a phone hotspot).
     //
     // In `fast` mode (used for SAME-ROOM acoustic pairing, where the two devices
     // are inches apart and almost certainly share a network) we stop a short

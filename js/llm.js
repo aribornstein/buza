@@ -45,6 +45,9 @@ export class Tutor {
       onProgress: (e) => {
         if (e.status === 'weights' && e.kind === 'bytes') {
           const pct = typeof e.fraction === 'number' ? e.fraction * 100 : 0;
+          onProgress?.({ status: 'progress', file: 'gemma-4-E2B', progress: pct, loadedBytes: e.loaded, totalBytes: e.total });
+        } else if (e.status === 'weights' && e.kind === 'tensors') {
+          const pct = typeof e.fraction === 'number' ? e.fraction * 100 : 0;
           onProgress?.({ status: 'progress', file: 'gemma-4-E2B', progress: pct });
         } else if (e.status === 'ready') {
           onProgress?.({ status: 'done' });
