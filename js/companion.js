@@ -9,6 +9,7 @@
 // QR); the other side pastes or scans it. See rtc.js for the wire format.
 
 import { RTCPeer } from './rtc.js';
+import { SonicLink } from './sonic.js';
 
 const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
@@ -16,6 +17,12 @@ const role = params.get('role') === 'gateway' ? 'gateway' : 'client';
 
 document.body.dataset.role = role;
 $('role-badge').textContent = role === 'gateway' ? 'Gateway · iPhone' : 'Client · Quest';
+
+// Data-over-sound pairing — shared across roles. Lets the iPhone + Quest swap
+// the WebRTC handshake acoustically (no server, no QR/camera, no typing).
+let sonic = null;
+function setSound(t) { const el = $('sound-status'); if (el) el.textContent = t; }
+function sonicReset() { try { sonic?.destroy(); } catch { /* noop */ } sonic = new SonicLink(); }
 
 // ---------- shared signaling UI ----------
 async function showLocalSignal(blob) {
@@ -79,9 +86,11 @@ async function initClient() {
 
   const peer = new RTCPeer({ initiator: true });
   let currentEl = null;
+  let connected = false;
 
   // 1) Produce our offer and show it for the gateway to scan/paste.
-  showLocalSignal(await peer.createOffer());
+  const offerBlob = await peer.createOffer();
+  showLocalSignal(offerBlob);
   $('signal-title').textContent = '1) Show this to the iPhone  ·  2) paste its reply below';
 
   // 2) Accept the gateway's answer.
@@ -92,8 +101,31 @@ async function initClient() {
     catch (e) { setConn('bad code'); console.error(e); }
   });
 
+  // 2b) Or pair entirely over sound: emit the offer on a loop while listening
+  //     for the gateway's spoken answer. We stop emitting once we've heard a
+  //     valid answer (the gateway keeps emitting until WebRTC actually opens).
+  $('sound-btn').addEventListener('click', async () => {
+    sonicReset();
+    let received = false;
+    const enc = new TextEncoder(); const dec = new TextDecoder();
+    try {
+      await sonic.startListening(async (bytes) => {
+        if (received || connected) return;
+        try {
+          await peer.acceptAnswer(dec.decode(bytes));
+          received = true; setSound('Heard the iPhone — connecting…'); setConn('connecting…');
+        } catch { /* probably heard our own offer; keep listening */ }
+      });
+      setSound('Hold the phone close. Emitting offer + listening…');
+      await sonic.sendUntil(enc.encode(offerBlob), () => received || connected, { maxRepeats: 4 });
+      if (!received && !connected) setSound('Still listening for the iPhone’s reply…');
+    } catch (e) { setSound('Microphone/audio blocked: ' + (e?.message || e)); }
+  });
+
   peer.on('state', (s) => setConn(s));
   peer.on('open', () => {
+    connected = true;
+    try { sonic?.destroy(); } catch { /* noop */ }
     $('signal-panel').classList.add('hidden');
     $('app-panel').classList.remove('hidden');
     setStatus('Connected — say or type something in Arabic!');
@@ -202,6 +234,7 @@ async function initGateway() {
   const stt = new SpeechToText();
   const peer = new RTCPeer({ initiator: false });
   let busy = false;
+  let connected = false;
 
   function log(t) { $('gw-status').textContent = t; }
   function toClient(text) { peer.send({ type: 'status', text }); }
@@ -218,9 +251,34 @@ async function initGateway() {
     } catch (e) { setConn('bad code'); console.error(e); }
   });
 
+  // Or pair over sound: listen for the Quest's offer, then emit our answer on a
+  // loop until WebRTC opens. We stop listening once we have the offer so our own
+  // answer chirp doesn't collide with itself on the mic.
+  $('sound-btn').addEventListener('click', async () => {
+    sonicReset();
+    let gotOffer = false;
+    const enc = new TextEncoder(); const dec = new TextDecoder();
+    try {
+      await sonic.startListening(async (bytes) => {
+        if (gotOffer || connected) return;
+        const offer = dec.decode(bytes);
+        try {
+          const answer = await peer.createAnswer(offer);
+          gotOffer = true; sonic.stopListening();
+          showLocalSignal(answer);
+          setSound('Heard the Quest — replying over sound…'); setConn('connecting…');
+          await sonic.sendUntil(enc.encode(answer), () => connected);
+        } catch { /* heard noise or our own audio; keep listening */ }
+      });
+      setSound('Hold the phone close to the headset. Listening for the Quest…');
+    } catch (e) { setSound('Microphone/audio blocked: ' + (e?.message || e)); }
+  });
+
   peer.on('state', (s) => setConn(s));
   peer.on('open', async () => {
+    connected = true;
     setConn('connected');
+    setSound('Paired ✓');
     toClient('Loading models on iPhone…');
     log('Loading Whisper + Gemma-4…');
     try {

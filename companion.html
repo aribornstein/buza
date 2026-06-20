@@ -23,6 +23,10 @@
     #role-badge { font-weight: 600; padding: 4px 10px; border-radius: 999px; background: #1f2937; color: #fff; font-size: 13px; }
     #conn-state { font-size: 13px; opacity: 0.8; }
     #signal-panel { border: 1px solid #334155; border-radius: 12px; padding: 16px; }
+    .sonic-pair { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 4px 0 16px; }
+    .sonic-pair button { background: #2563eb; border: none; color: #fff; padding: 10px 16px; border-radius: 10px; font-size: 15px; cursor: pointer; }
+    .sonic-pair button:hover { background: #1d4ed8; }
+    .muted { color: #94a3b8; font-size: 13px; }
     #signal-title { margin: 0 0 12px; font-size: 15px; }
     .signal-grid { display: grid; gap: 16px; grid-template-columns: 1fr; }
     @media (min-width: 620px) { .signal-grid { grid-template-columns: 1fr 1fr; } }
@@ -65,6 +69,10 @@
     <!-- ===== manual signaling ===== -->
     <section id="signal-panel">
       <h3 id="signal-title">Connecting…</h3>
+      <div class="sonic-pair">
+        <button id="sound-btn" type="button">🔊 Pair by sound (no server / no camera)</button>
+        <span id="sound-status" class="muted"></span>
+      </div>
       <div class="signal-grid">
         <div class="signal-box">
           <h4>Your code (show this)</h4>

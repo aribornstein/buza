@@ -54,13 +54,13 @@ export class RTCPeer {
   }
 
   async createAnswer(remoteBlob) {
-    await this.pc.setRemoteDescription(decodeSignal(remoteBlob));
+    await this.pc.setRemoteDescription(await decodeSignal(remoteBlob));
     await this.pc.setLocalDescription(await this.pc.createAnswer());
     return encodeSignal(await this._gathered());
   }
 
   async acceptAnswer(remoteBlob) {
-    await this.pc.setRemoteDescription(decodeSignal(remoteBlob));
+    await this.pc.setRemoteDescription(await decodeSignal(remoteBlob));
   }
 
   // ---- sending ----
