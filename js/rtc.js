@@ -55,10 +55,10 @@ export class RTCPeer {
     return encodeSignal(await this._gathered());
   }
 
-  async createAnswer(remoteBlob) {
+  async createAnswer(remoteBlob, { fastIce = false } = {}) {
     await this.pc.setRemoteDescription(await decodeSignal(remoteBlob));
     await this.pc.setLocalDescription(await this.pc.createAnswer());
-    return encodeSignal(await this._gathered());
+    return encodeSignal(await this._gathered(fastIce ? 1200 : 2500, { fast: fastIce }));
   }
 
   async acceptAnswer(remoteBlob) {
@@ -138,7 +138,7 @@ export class RTCPeer {
     });
   }
 
-  _gathered(timeoutMs = 2500) {
+  _gathered(timeoutMs = 2500, { fast = false } = {}) {
     if (this.pc.iceGatheringState === 'complete') {
       return Promise.resolve(this.pc.localDescription);
     }
@@ -147,18 +147,29 @@ export class RTCPeer {
     // ANY of: gathering complete, end-of-candidates (null icecandidate), or a
     // short timeout — emitting whatever candidates we have. Host/mDNS candidates
     // alone are enough on the same LAN (e.g. an iPhone hotspot).
+    //
+    // In `fast` mode (used for SAME-ROOM acoustic pairing, where the two devices
+    // are inches apart and almost certainly share a network) we stop a short
+    // grace period after the FIRST local candidate instead of waiting out the
+    // full srflx timeout — this removes the multi-second pause before the
+    // gateway can start emitting its answer.
     return new Promise((res) => {
       let done = false;
+      let grace = null;
       const finish = () => {
         if (done) return;
         done = true;
         this.pc.removeEventListener('icegatheringstatechange', onChange);
         this.pc.removeEventListener('icecandidate', onCand);
         clearTimeout(timer);
+        clearTimeout(grace);
         res(this.pc.localDescription);
       };
       const onChange = () => { if (this.pc.iceGatheringState === 'complete') finish(); };
-      const onCand = (e) => { if (!e.candidate) finish(); };
+      const onCand = (e) => {
+        if (!e.candidate) return finish();        // end-of-candidates marker
+        if (fast && !grace) grace = setTimeout(finish, 300); // got a host candidate; don't wait for srflx
+      };
       this.pc.addEventListener('icegatheringstatechange', onChange);
       this.pc.addEventListener('icecandidate', onCand);
       const timer = setTimeout(finish, timeoutMs);

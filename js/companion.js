@@ -150,6 +150,18 @@ async function initClient() {
     sonicTx = new SonicLink();
     setProgress(0);
     let received = false;
+    let emitting = false;
+    // Half-duplex over one acoustic channel: while we're emitting the offer our
+    // own (loud) tone masks the iPhone's reply, so we can't just blast the offer
+    // on a loop. Instead we take turns — emit the offer ONCE, then go quiet and
+    // listen for long enough to capture a full reply, and only re-emit if the
+    // iPhone didn't answer. The gateway keeps replying until WebRTC connects.
+    const waitUntil = (cond, ms) => new Promise((resolve) => {
+      const t0 = Date.now();
+      const iv = setInterval(() => {
+        if (cond() || Date.now() - t0 >= ms) { clearInterval(iv); resolve(); }
+      }, 120);
+    });
     try {
       await sonic.startListening(async (bytes) => {
         if (received || connected) return;
@@ -158,14 +170,23 @@ async function initClient() {
           received = true; setProgress(1); setSound('Heard the iPhone — connecting…'); setConn('connecting…');
         } catch { /* probably heard our own offer; keep listening */ }
       }, ({ fraction, receivedBytes, totalBytes }) => {
-        if (!received) { setProgress(fraction); setSound(totalBytes ? `Hearing the iPhone’s reply… ${receivedBytes}/${totalBytes} B` : 'Listening for the iPhone…'); }
+        if (received || emitting) return; // while emitting, the bar shows our outgoing offer
+        setProgress(fraction);
+        setSound(totalBytes ? `Hearing the iPhone’s reply… ${receivedBytes}/${totalBytes} B` : 'Listening for the iPhone…');
       });
-      setSound('Hold the phone close. Emitting offer + listening…');
-      await sonicTx.sendUntil(blobToPacked(offerBlob), () => received || connected, {
-        maxRepeats: 6,
-        onProgress: ({ sentBytes, totalBytes }) => { if (!received) setSound(`Emitting offer… ${sentBytes}/${totalBytes} B`); },
-      });
-      if (!received && !connected) setSound('Still listening for the iPhone’s reply…');
+      setSound('Hold the phone close — pairing over sound…');
+      for (let attempt = 0; attempt < 6 && !received && !connected; attempt++) {
+        emitting = true;
+        await sonicTx.send(blobToPacked(offerBlob), ({ fraction, sentBytes, totalBytes }) => {
+          if (!received) { setProgress(fraction); setSound(`Emitting offer… ${sentBytes}/${totalBytes} B`); }
+        });
+        emitting = false;
+        if (received || connected) break;
+        // Go quiet and let the iPhone reply — long enough for a full answer tone.
+        setProgress(0); setSound('Offer sent — listening for the iPhone’s reply…');
+        await waitUntil(() => received || connected, 18000);
+      }
+      if (!received && !connected) setSound('No reply heard — move the phone closer and tap again.');
     } catch (e) { setProgress(null); setSound('Microphone/audio blocked: ' + (e?.message || e)); }
   });
 
@@ -310,7 +331,7 @@ async function initGateway() {
       await sonic.startListening(async (bytes) => {
         if (gotOffer || connected) return;
         try {
-          const answer = await peer.createAnswer(packedToBlob(bytes));
+          const answer = await peer.createAnswer(packedToBlob(bytes), { fastIce: true });
           gotOffer = true; setProgress(1); sonic.stopListening();
           showLocalSignal(answer);
           setSound('Heard the Quest — replying over sound…'); setConn('connecting…');
