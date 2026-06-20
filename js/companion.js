@@ -49,6 +49,61 @@ function sonicReset() {
 // turnaround), so we add a generous margin.
 function arqRto(link) { return link.airtimeMs(1) + 2500; }
 
+// Re-encode a recorded clip into a 16 kHz mono WAV. The client records WebM/Opus
+// (Quest/Chrome), which iOS Safari — the gateway running Whisper — cannot decode.
+// Decoding happens here, in the browser that produced the clip, and the WAV we
+// emit decodes cleanly everywhere.
+async function blobToWav16k(blob) {
+  const SR = 16000;
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  let decoded;
+  try { decoded = await ac.decodeAudioData(await blob.arrayBuffer()); }
+  finally { ac.close().catch(() => {}); }
+
+  const len = decoded.length;
+  let mono = new Float32Array(len);
+  for (let c = 0; c < decoded.numberOfChannels; c++) {
+    const d = decoded.getChannelData(c);
+    for (let i = 0; i < len; i++) mono[i] += d[i] / decoded.numberOfChannels;
+  }
+  if (decoded.sampleRate !== SR) {
+    const off = new OfflineAudioContext(1, Math.ceil(len * SR / decoded.sampleRate), SR);
+    const buf = off.createBuffer(1, len, decoded.sampleRate);
+    buf.copyToChannel(mono, 0);
+    const src = off.createBufferSource();
+    src.buffer = buf; src.connect(off.destination); src.start();
+    mono = (await off.startRendering()).getChannelData(0);
+  }
+  return encodeWavPcm16(mono, SR);
+}
+
+// Wrap mono Float32 samples in a 16-bit PCM WAV container.
+function encodeWavPcm16(samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);                 // PCM
+  view.setUint16(22, 1, true);                 // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);    // byte rate
+  view.setUint16(32, 2, true);                 // block align
+  view.setUint16(34, 16, true);                // bits/sample
+  writeStr(36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+  let off = 44;
+  for (let i = 0; i < samples.length; i++) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    off += 2;
+  }
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
 // Pairing progress bar. Pass a 0..1 fraction to show/update it, or null to hide.
 function setProgress(frac) {
   const wrap = $('sonic-progress'); const bar = $('sonic-bar');
@@ -280,7 +335,13 @@ async function initClient() {
     const blob = new Blob(chunks, { type: recorder.mimeType });
     recorder = null; micBtn.classList.remove('recording'); setStatus('Transcribing on iPhone…');
     peer.send({ type: 'dialect', value: $('dialect-select').value });
-    await peer.sendAudio(blob);
+    // The Quest/Chrome records WebM/Opus, which iOS Safari (the gateway) cannot
+    // decode. Re-encode here — where the recording can be decoded — into a
+    // 16 kHz mono WAV that Whisper-on-Safari reads cleanly.
+    let outBlob = blob;
+    try { outBlob = await blobToWav16k(blob); }
+    catch (e) { console.warn('WAV transcode failed, sending raw clip:', e); }
+    await peer.sendAudio(outBlob);
   };
   micBtn.addEventListener('pointerdown', startRec);
   micBtn.addEventListener('pointerup', stopRec);
