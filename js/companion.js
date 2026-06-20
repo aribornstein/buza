@@ -8,7 +8,7 @@
 // Signaling is manual (no server): each side shows a compact SDP blob (text +
 // QR); the other side pastes or scans it. See rtc.js for the wire format.
 
-import { RTCPeer } from './rtc.js';
+import { RTCPeer, packedToBlob, blobToPacked } from './rtc.js';
 import { SonicLink } from './sonic.js';
 
 const $ = (id) => document.getElementById(id);
@@ -131,17 +131,16 @@ async function initClient() {
     if (!offerBlob) { setSound('No pairing code yet — reload the page.'); return; }
     sonicReset();
     let received = false;
-    const enc = new TextEncoder(); const dec = new TextDecoder();
     try {
       await sonic.startListening(async (bytes) => {
         if (received || connected) return;
         try {
-          await peer.acceptAnswer(dec.decode(bytes));
+          await peer.acceptAnswer(packedToBlob(bytes));
           received = true; setSound('Heard the iPhone — connecting…'); setConn('connecting…');
         } catch { /* probably heard our own offer; keep listening */ }
       });
       setSound('Hold the phone close. Emitting offer + listening…');
-      await sonic.sendUntil(enc.encode(offerBlob), () => received || connected, { maxRepeats: 4 });
+      await sonic.sendUntil(blobToPacked(offerBlob), () => received || connected, { maxRepeats: 6 });
       if (!received && !connected) setSound('Still listening for the iPhone’s reply…');
     } catch (e) { setSound('Microphone/audio blocked: ' + (e?.message || e)); }
   });
@@ -280,17 +279,15 @@ async function initGateway() {
   $('sound-btn').addEventListener('click', async () => {
     sonicReset();
     let gotOffer = false;
-    const enc = new TextEncoder(); const dec = new TextDecoder();
     try {
       await sonic.startListening(async (bytes) => {
         if (gotOffer || connected) return;
-        const offer = dec.decode(bytes);
         try {
-          const answer = await peer.createAnswer(offer);
+          const answer = await peer.createAnswer(packedToBlob(bytes));
           gotOffer = true; sonic.stopListening();
           showLocalSignal(answer);
           setSound('Heard the Quest — replying over sound…'); setConn('connecting…');
-          await sonic.sendUntil(enc.encode(answer), () => connected);
+          await sonic.sendUntil(blobToPacked(answer), () => connected);
         } catch { /* heard noise or our own audio; keep listening */ }
       });
       setSound('Hold the phone close to the headset. Listening for the Quest…');

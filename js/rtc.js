@@ -13,6 +13,8 @@
 // to COMPLETE before emitting the blob, so all candidates are embedded (no
 // trickle) — required when there's no signaling channel.
 
+import { packSignal, unpackSignal } from './sdp.js';
+
 const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
 const CHUNK = 16 * 1024;            // audio chunk size over the data channel
 const DRAIN_THRESHOLD = 256 * 1024; // pause sending when bufferedAmount exceeds this
@@ -164,28 +166,32 @@ export class RTCPeer {
   }
 }
 
-// ---- compact signal encoding (gzip + base64, with a plain fallback) ----
-export async function encodeSignal(desc) {
-  const json = JSON.stringify({ type: desc.type, sdp: desc.sdp });
-  const bytes = new TextEncoder().encode(json);
-  const packed = await gzip(bytes);
-  return (packed ? 'G' : 'P') + bytesToB64(packed ?? bytes);
+// ---- compact signal encoding ----
+//
+// Format byte prefix:
+//   'C' — compact codec (sdp.js): only the variable SDP fields, ~130 bytes.
+//   'G' — legacy gzip(JSON), 'P' — legacy plain JSON (decode kept for back-compat).
+//
+// The compact form is what every fresh handshake uses; it's what makes the
+// blob small enough to pair reliably over sound (2 chunks instead of ~11).
+export function encodeSignal(desc) {
+  return 'C' + bytesToB64(packSignal(desc));
 }
 
 export async function decodeSignal(blob) {
   const flag = blob[0];
   const bytes = b64ToBytes(blob.slice(1).trim());
-  const json = new TextDecoder().decode(
-    flag === 'G' ? await gunzip(bytes) : bytes
-  );
+  if (flag === 'C') return unpackSignal(bytes);
+  const json = new TextDecoder().decode(flag === 'G' ? await gunzip(bytes) : bytes);
   return JSON.parse(json);
 }
 
-async function gzip(bytes) {
-  if (typeof CompressionStream === 'undefined') return null;
-  const cs = new CompressionStream('gzip');
-  const stream = new Blob([bytes]).stream().pipeThrough(cs);
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+// Raw <-> blob helpers for the sound transport: over the air we ship the packed
+// bytes directly (no base64), saving the extra ~33% that base64 would add.
+export function packedToBlob(bytes) { return 'C' + bytesToB64(bytes); }
+export function blobToPacked(blob) {
+  if (blob[0] !== 'C') throw new Error('sound pairing requires the compact signal format');
+  return b64ToBytes(blob.slice(1).trim());
 }
 
 async function gunzip(bytes) {

@@ -16,7 +16,7 @@ A prioritized list of features, fixes, and polish for the Palestinian Arabic Tut
 
 - [ ] **Real-device test pass** — validate `sonic.js` pairing on iPhone ↔ Quest over a hotspot LAN (blocked locally by sandbox mic/mDNS).
 - [ ] **PWA / offline install** — add a service worker + manifest so the app keeps a secure context and runs offline on the go (required for iOS Safari mic over hotspot).
-- [ ] **SDP compaction** — strip the SDP to ufrag/pwd/fingerprint/candidate and rebuild from a template so the handshake fits in a single ~1s chirp per direction (fewer chunks, fewer collisions).
+- [x] **SDP compaction** — strip the SDP to ufrag/pwd/fingerprint/candidate and rebuild from a template (`js/sdp.js`) so the handshake is ~130 bytes (2 sound chunks instead of ~11). Done.
 - [ ] **Pairing progress UI** — show chunk-reassembly progress and a clear "listening / emitting / connected" state machine during sonic pairing.
 - [ ] **Reconnect handling** — detect dropped data channels and re-pair gracefully instead of requiring a page reload.
 
