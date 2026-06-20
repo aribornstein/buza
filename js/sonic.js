@@ -129,6 +129,16 @@ export class SonicLink {
     }
   }
 
+  // Estimate how many milliseconds of audio a `byteLen`-byte payload takes on
+  // this protocol. Used to derive a safe ARQ retransmission timeout (RTO) from
+  // the actual symbol air-time instead of a guessed constant. Requires init().
+  airtimeMs(byteLen) {
+    const dummy = new Uint8Array(Math.max(1, byteLen));
+    let samples = 0;
+    for (const f of this._frames(dummy)) samples += this._encodeWave(f).length;
+    return (samples / this.ctx.sampleRate) * 1000;
+  }
+
   // Split a payload into base64 chunk frames: [msgId, seq, total, ...slice].
   // One ggwave message per frame, kept under its ~140-byte payload limit.
   _frames(bytes) {
