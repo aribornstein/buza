@@ -88,12 +88,25 @@ async function loadEverything() {
   loader.classList.remove('hidden');
   setStatus('loading', 'Loading models…');
 
+  // On-device WebGPU diagnostics: surfaces device-lost / OOM reasons and a crash
+  // trail that survives a tab reload (an iOS OOM kill wipes the console).
+  let diag = { emit() {}, stage() {} };
   try {
+    const { installGpuDiagnostics, probeWebGPU } = await import('./gpu-diag.js');
+    diag = installGpuDiagnostics({ showPanel: true });
+    diag.stage('probe WebGPU');
+    await probeWebGPU(diag.emit);
+  } catch (e) { console.warn('diag unavailable', e); }
+
+  try {
+    diag.stage('load Gemma-4 weights + warmup');
     loaderDetail.textContent = 'Loading the language model (Gemma 4)…';
     await tutor.load(onProgress);
+    diag.stage('load Whisper');
     loaderDetail.textContent = 'Loading speech recognition (Whisper)…';
     await stt.load(onProgress);
     await speaker.ready;
+    diag.stage('ready');
 
     loaded = true;
     loader.classList.add('hidden');
@@ -105,6 +118,8 @@ async function loadEverything() {
     greet();
   } catch (err) {
     console.error(err);
+    diag.emit('LOAD FAILED: ' + (err?.message || err));
+    diag.stage('FAILED');
     loader.classList.add('hidden');
     loadBtn.disabled = false;
     setStatus('idle', 'Failed to load models — see console.');
@@ -234,5 +249,9 @@ $('opt-client').addEventListener('click', () => {
 $('opt-gateway').addEventListener('click', () => {
   location.href = './companion.html?role=gateway';
 });
+
+// If a previous run crashed mid-load (e.g. an iOS WebGPU OOM tab-kill that
+// reloads the page), surface that crash trail immediately so it isn't lost.
+import('./gpu-diag.js').then((m) => m.replayPrevious()).catch(() => {});
 
 setStatus('idle', 'Choose where the AI runs to begin');

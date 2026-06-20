@@ -376,7 +376,9 @@ async function initGateway() {
   $('signal-title').textContent = '1) Scan / paste the client device\u2019s code  ·  2) show your reply back';
   $('apply-remote').textContent = 'Generate reply code';
   $('local-blob').placeholder = 'Your reply code appears here after you load the client device’s code.';
-
+  // If a previous run crashed mid model-load (e.g. an iOS WebGPU OOM tab-kill),
+  // surface that crash trail immediately so it isn't lost on the reload.
+  import('./gpu-diag.js').then((m) => m.replayPrevious()).catch(() => {});
   const peer = new RTCPeer({ initiator: false });
   let busy = false;
   let connected = false;

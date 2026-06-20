@@ -109,6 +109,21 @@ export function installGpuDiagnostics({ showPanel = true } = {}) {
   return { emit, stage };
 }
 
+// If a prior session crashed (last stage wasn't 'ready'), show its trail right
+// away on the next page load — without waiting for the user to retry. This is the
+// key to debugging an iOS OOM tab-kill, which reloads the page and wipes console.
+export function replayPrevious() {
+  const rec = readRec();
+  if (rec?.lines?.length && rec.lastStage && rec.lastStage !== 'ready') {
+    const panel = mountPanel();
+    panel.textContent = rec.lines.join('\n') +
+      `\n──── (previous session ended at stage: ${rec.lastStage}) ────`;
+    panel.scrollTop = panel.scrollHeight;
+    return true;
+  }
+  return false;
+}
+
 // One-shot probe of the device ceiling. Reveals whether iOS simply can't fit the
 // model: compare the weights total (logged during download) against maxBufferSize.
 export async function probeWebGPU(emit) {
