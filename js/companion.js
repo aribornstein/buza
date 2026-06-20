@@ -25,8 +25,13 @@ if (hasRole) {
 // Data-over-sound pairing — shared across roles. Lets the iPhone + Quest swap
 // the WebRTC handshake acoustically (no server, no QR/camera, no typing).
 let sonic = null;
+let sonicTx = null; // client-only: a 2nd link so transmitting never disrupts the listening decoder
 function setSound(t) { const el = $('sound-status'); if (el) el.textContent = t; }
-function sonicReset() { try { sonic?.destroy(); } catch { /* noop */ } sonic = new SonicLink(); }
+function sonicReset() {
+  try { sonic?.destroy(); } catch { /* noop */ }
+  try { sonicTx?.destroy(); } catch { /* noop */ }
+  sonic = new SonicLink(); sonicTx = null;
+}
 
 // Pairing progress bar. Pass a 0..1 fraction to show/update it, or null to hide.
 function setProgress(frac) {
@@ -139,6 +144,10 @@ async function initClient() {
   $('sound-btn').addEventListener('click', async () => {
     if (!offerBlob) { setSound('No pairing code yet — reload the page.'); return; }
     sonicReset();
+    // ggwave can't encode and decode on one instance at the same time, so the
+    // client listens on `sonic` and emits on a separate `sonicTx` — otherwise
+    // emitting the offer would clobber the decoder and we'd miss the reply.
+    sonicTx = new SonicLink();
     setProgress(0);
     let received = false;
     try {
@@ -152,7 +161,7 @@ async function initClient() {
         if (!received) { setProgress(fraction); setSound(totalBytes ? `Hearing the iPhone’s reply… ${receivedBytes}/${totalBytes} B` : 'Listening for the iPhone…'); }
       });
       setSound('Hold the phone close. Emitting offer + listening…');
-      await sonic.sendUntil(blobToPacked(offerBlob), () => received || connected, {
+      await sonicTx.sendUntil(blobToPacked(offerBlob), () => received || connected, {
         maxRepeats: 6,
         onProgress: ({ sentBytes, totalBytes }) => { if (!received) setSound(`Emitting offer… ${sentBytes}/${totalBytes} B`); },
       });
@@ -165,6 +174,7 @@ async function initClient() {
     connected = true;
     setProgress(1);
     try { sonic?.destroy(); } catch { /* noop */ }
+    try { sonicTx?.destroy(); } catch { /* noop */ }
     $('signal-panel').classList.add('hidden');
     $('app-panel').classList.remove('hidden');
     setStatus('Connected — say or type something in Arabic!');
