@@ -31,6 +31,8 @@ function sonicReset() { try { sonic?.destroy(); } catch { /* noop */ } sonic = n
 // ---------- shared signaling UI ----------
 async function showLocalSignal(blob) {
   $('local-blob').value = blob;
+  const mine = document.querySelector('.signal-box.mine');
+  if (mine) mine.style.opacity = '1'; // un-dim once we actually have a code to show
   try {
     const { default: QRCode } = await import('https://esm.sh/qrcode@1.5.4');
     await QRCode.toCanvas($('local-qr'), blob, { errorCorrectionLevel: 'L', margin: 1, width: 280 });
@@ -246,17 +248,16 @@ async function initClient() {
 async function initGateway() {
   $('signal-title').textContent = '1) Scan / paste the Quest\u2019s code  ·  2) show your reply back';
   $('apply-remote').textContent = 'Generate reply code';
+  $('local-blob').placeholder = 'Your reply code appears here after you load the Quest’s code.';
 
-  const { env } = await import('@huggingface/transformers');
-  env.backends.onnx.wasm.numThreads = 1; // Whisper (ORT) without SharedArrayBuffer
-  const { Tutor } = await import('./llm.js');
-  const { SpeechToText } = await import('./asr.js');
-
-  const tutor = new Tutor();
-  const stt = new SpeechToText();
   const peer = new RTCPeer({ initiator: false });
   let busy = false;
   let connected = false;
+  // Heavy AI deps (Transformers.js + Gemma + Whisper) load LAZILY only after a
+  // client connects — so the signaling UI is interactive immediately and a slow
+  // or blocked CDN can never make the gateway look “stuck”.
+  let tutor = null;
+  let stt = null;
 
   function log(t) { $('gw-status').textContent = t; }
   function toClient(text) { peer.send({ type: 'status', text }); }
@@ -304,6 +305,12 @@ async function initGateway() {
     toClient('Loading models on iPhone…');
     log('Loading Whisper + Gemma-4…');
     try {
+      const { env } = await import('@huggingface/transformers');
+      env.backends.onnx.wasm.numThreads = 1; // Whisper (ORT) without SharedArrayBuffer
+      const { Tutor } = await import('./llm.js');
+      const { SpeechToText } = await import('./asr.js');
+      tutor = new Tutor();
+      stt = new SpeechToText();
       await stt.load(() => {});
       await tutor.load((p) => {
         if (p.status === 'progress') log(`Loading Gemma-4 — ${(p.progress || 0).toFixed(0)}%`);
@@ -318,10 +325,14 @@ async function initGateway() {
 
   // Client → gateway.
   peer.on('control', async (m) => {
-    if (m.type === 'dialect') { tutor.setDialect(m.value); }
-    else if (m.type === 'text') { tutor.setDialect(m.dialect || tutor.dialect); await respond(m.text); }
+    if (m.type === 'dialect') { tutor?.setDialect(m.value); }
+    else if (m.type === 'text') {
+      if (!tutor) { toClient('Still loading the model on the iPhone…'); return; }
+      tutor.setDialect(m.dialect || tutor.dialect); await respond(m.text);
+    }
   });
   peer.on('audio', async (blob) => {
+    if (!stt) { toClient('Still loading the model on the iPhone…'); return; }
     log('Transcribing…');
     const text = await stt.transcribeBlob(blob);
     if (!text) { toClient('Didn\u2019t catch that — try again.'); return; }

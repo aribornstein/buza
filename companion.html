@@ -61,6 +61,11 @@
     body[data-role="client"] .client-only { display: block; }
     #gw-status { font-size: 14px; margin-top: 8px; }
 
+    /* Gateway acts second: it needs the Quest's code FIRST, then shows its reply.
+       Put the paste/scan box first and de-emphasise the (empty) reply box. */
+    body[data-role="gateway"] .signal-box.theirs { order: -1; }
+    body[data-role="gateway"] .signal-box.mine { opacity: .6; }
+
     /* role picker (shown when opened without ?role=) */
     #role-picker { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(8,11,20,.85); backdrop-filter: blur(8px); padding: 24px; }
     #role-picker.hidden { display: none; }
@@ -102,13 +107,13 @@
         <span id="sound-status" class="muted"></span>
       </div>
       <div class="signal-grid">
-        <div class="signal-box">
+        <div class="signal-box mine">
           <h4>Your code (show this)</h4>
-          <canvas id="local-qr"></canvas>
+          <canvas id="local-qr" style="display:none"></canvas>
           <textarea id="local-blob" class="blob" readonly placeholder="generating…"></textarea>
           <div class="row"><button id="copy-local" type="button">Copy</button></div>
         </div>
-        <div class="signal-box">
+        <div class="signal-box theirs">
           <h4>Their code (paste / scan)</h4>
           <textarea id="remote-blob" class="blob" placeholder="Paste the other device's code here"></textarea>
           <div class="row">
