@@ -28,6 +28,15 @@ let sonic = null;
 function setSound(t) { const el = $('sound-status'); if (el) el.textContent = t; }
 function sonicReset() { try { sonic?.destroy(); } catch { /* noop */ } sonic = new SonicLink(); }
 
+// Pairing progress bar. Pass a 0..1 fraction to show/update it, or null to hide.
+function setProgress(frac) {
+  const wrap = $('sonic-progress'); const bar = $('sonic-bar');
+  if (!wrap || !bar) return;
+  if (frac == null) { wrap.hidden = true; bar.style.width = '0%'; return; }
+  wrap.hidden = false;
+  bar.style.width = Math.round(Math.max(0, Math.min(1, frac)) * 100) + '%';
+}
+
 // ---------- shared signaling UI ----------
 async function showLocalSignal(blob) {
   $('local-blob').value = blob;
@@ -130,24 +139,31 @@ async function initClient() {
   $('sound-btn').addEventListener('click', async () => {
     if (!offerBlob) { setSound('No pairing code yet — reload the page.'); return; }
     sonicReset();
+    setProgress(0);
     let received = false;
     try {
       await sonic.startListening(async (bytes) => {
         if (received || connected) return;
         try {
           await peer.acceptAnswer(packedToBlob(bytes));
-          received = true; setSound('Heard the iPhone — connecting…'); setConn('connecting…');
+          received = true; setProgress(1); setSound('Heard the iPhone — connecting…'); setConn('connecting…');
         } catch { /* probably heard our own offer; keep listening */ }
+      }, ({ fraction, receivedBytes, totalBytes }) => {
+        if (!received) { setProgress(fraction); setSound(totalBytes ? `Hearing the iPhone’s reply… ${receivedBytes}/${totalBytes} B` : 'Listening for the iPhone…'); }
       });
       setSound('Hold the phone close. Emitting offer + listening…');
-      await sonic.sendUntil(blobToPacked(offerBlob), () => received || connected, { maxRepeats: 6 });
+      await sonic.sendUntil(blobToPacked(offerBlob), () => received || connected, {
+        maxRepeats: 6,
+        onProgress: ({ sentBytes, totalBytes }) => { if (!received) setSound(`Emitting offer… ${sentBytes}/${totalBytes} B`); },
+      });
       if (!received && !connected) setSound('Still listening for the iPhone’s reply…');
-    } catch (e) { setSound('Microphone/audio blocked: ' + (e?.message || e)); }
+    } catch (e) { setProgress(null); setSound('Microphone/audio blocked: ' + (e?.message || e)); }
   });
 
   peer.on('state', (s) => setConn(s));
   peer.on('open', () => {
     connected = true;
+    setProgress(1);
     try { sonic?.destroy(); } catch { /* noop */ }
     $('signal-panel').classList.add('hidden');
     $('app-panel').classList.remove('hidden');
@@ -278,26 +294,32 @@ async function initGateway() {
   // answer chirp doesn't collide with itself on the mic.
   $('sound-btn').addEventListener('click', async () => {
     sonicReset();
+    setProgress(0);
     let gotOffer = false;
     try {
       await sonic.startListening(async (bytes) => {
         if (gotOffer || connected) return;
         try {
           const answer = await peer.createAnswer(packedToBlob(bytes));
-          gotOffer = true; sonic.stopListening();
+          gotOffer = true; setProgress(1); sonic.stopListening();
           showLocalSignal(answer);
           setSound('Heard the Quest — replying over sound…'); setConn('connecting…');
-          await sonic.sendUntil(blobToPacked(answer), () => connected);
+          await sonic.sendUntil(blobToPacked(answer), () => connected, {
+            onProgress: ({ fraction, sentBytes, totalBytes }) => { if (!connected) { setProgress(fraction); setSound(`Replying over sound… ${sentBytes}/${totalBytes} B`); } },
+          });
         } catch { /* heard noise or our own audio; keep listening */ }
+      }, ({ fraction, receivedBytes, totalBytes }) => {
+        if (!gotOffer) { setProgress(fraction); setSound(totalBytes ? `Hearing the Quest’s code… ${receivedBytes}/${totalBytes} B` : 'Listening for the Quest…'); }
       });
       setSound('Hold the phone close to the headset. Listening for the Quest…');
-    } catch (e) { setSound('Microphone/audio blocked: ' + (e?.message || e)); }
+    } catch (e) { setProgress(null); setSound('Microphone/audio blocked: ' + (e?.message || e)); }
   });
 
   peer.on('state', (s) => setConn(s));
   peer.on('open', async () => {
     connected = true;
     setConn('connected');
+    setProgress(1);
     setSound('Paired ✓');
     toClient('Loading models on iPhone…');
     log('Loading Whisper + Gemma-4…');

@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Handshake self-test</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 18px;
+           background: #0e1116; color: #e6edf3; line-height: 1.45; }
+    h1 { font-size: 1.2rem; margin: 0 0 4px; }
+    p.sub { color: #9aa4b2; margin: 0 0 16px; font-size: .9rem; }
+    button { font-size: 1rem; padding: 12px 16px; border-radius: 12px; border: 1px solid #2d3340;
+             background: #1b2230; color: #e6edf3; cursor: pointer; width: 100%; margin: 6px 0; }
+    button:active { background: #232c3d; }
+    .row { display: flex; gap: 10px; }
+    .row button { margin: 6px 0; }
+    pre { background: #11161e; border: 1px solid #222a36; border-radius: 12px; padding: 12px;
+          white-space: pre-wrap; word-break: break-word; font-size: .82rem; min-height: 60px; }
+    .ok { color: #3fb950; } .bad { color: #f85149; } .dim { color: #8b949e; }
+    h2 { font-size: .95rem; margin: 22px 0 6px; }
+    label { display: block; font-size: .85rem; color: #9aa4b2; margin: 10px 0 4px; }
+    select { width: 100%; font-size: 1rem; padding: 10px; border-radius: 10px;
+             background: #1b2230; color: #e6edf3; border: 1px solid #2d3340; }
+    .bar-wrap { height: 10px; background: #1b2230; border-radius: 999px; overflow: hidden; margin: 8px 0 2px; }
+    .bar-wrap[hidden] { display: none; }
+    .bar-fill { height: 100%; width: 0%; border-radius: 999px;
+                background: linear-gradient(90deg, #3fb950, #2ea043); transition: width .2s ease; }
+  </style>
+</head>
+<body>
+  <h1>Audio handshake self-test</h1>
+  <p class="sub">Three layers, cheapest first. Layers 1–2 need no microphone.</p>
+
+  <label for="proto">Carrier protocol</label>
+  <select id="proto">
+    <option value="GGWAVE_PROTOCOL_ULTRASOUND_FAST" selected>Ultrasound · Fast (~15–20 kHz, inaudible) — default</option>
+    <option value="GGWAVE_PROTOCOL_ULTRASOUND_NORMAL">Ultrasound · Normal (most robust, slower)</option>
+    <option value="GGWAVE_PROTOCOL_ULTRASOUND_FASTEST">Ultrasound · Fastest (shortest, least robust)</option>
+    <option value="GGWAVE_PROTOCOL_AUDIBLE_FAST">Audible · Fast (you can hear it)</option>
+  </select>
+
+  <h2>1 + 2 · Codec &amp; acoustic loopback (no mic)</h2>
+  <button id="auto">Run automated test</button>
+
+  <h2>3 · Real speaker → mic (this device)</h2>
+  <p class="sub">Plays the handshake out loud and decodes it back through this device's own
+     microphone. Turn the volume up; needs mic permission. Best on the phone.</p>
+  <button id="selftest">Play &amp; listen on this device</button>
+
+  <div id="bar" class="bar-wrap" hidden><div id="barFill" class="bar-fill"></div></div>
+
+  <pre id="out" class="dim">Ready.</pre>
+
+  <h2>Two-device test (the real thing)</h2>
+  <p class="sub">Open <code>companion.html?role=client</code> on the Quest and
+     <code>companion.html?role=gateway</code> on the iPhone, hold them close, tap
+     “Pair by sound” on both. Connection succeeds when both leave the signaling screen.</p>
+
+  <script type="module">
+    import { SonicLink } from '../js/sonic.js';
+    import { packSignal, unpackSignal } from '../js/sdp.js';
+
+    const out = document.getElementById('out');
+    const log = (msg, cls = '') => {
+      const line = document.createElement('div');
+      if (cls) line.className = cls;
+      line.textContent = msg;
+      out.appendChild(line);
+    };
+    const reset = () => { out.textContent = ''; out.className = ''; };
+    const proto = () => document.getElementById('proto').value;
+    const bar = (frac) => {
+      const w = document.getElementById('bar'), f = document.getElementById('barFill');
+      if (frac == null) { w.hidden = true; f.style.width = '0%'; return; }
+      w.hidden = false; f.style.width = Math.round(Math.max(0, Math.min(1, frac)) * 100) + '%';
+    };
+
+    // Build a real data-channel offer + answer to exercise the codec on.
+    async function realDescriptions() {
+      const cfg = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+      const a = new RTCPeerConnection(cfg);
+      a.createDataChannel('control'); a.createDataChannel('tokens');
+      await a.setLocalDescription(await a.createOffer());
+      await gather(a);
+      const b = new RTCPeerConnection(cfg);
+      await b.setRemoteDescription(a.localDescription);
+      await b.setLocalDescription(await b.createAnswer());
+      await gather(b);
+      const offer = a.localDescription, answer = b.localDescription;
+      a.close(); b.close();
+      return { offer, answer };
+      function gather(pc) {
+        return new Promise((r) => {
+          if (pc.iceGatheringState === 'complete') return r();
+          const t = setTimeout(r, 3000);
+          pc.addEventListener('icecandidate', (e) => { if (!e.candidate) { clearTimeout(t); r(); } });
+        });
+      }
+    }
+
+    const eq = (x, y) => x.length === y.length && x.every((v, i) => v === y[i]);
+
+    document.getElementById('auto').onclick = async () => {
+      reset();
+      let pass = true;
+      try {
+        const { offer, answer } = await realDescriptions();
+
+        // --- Layer 1: codec round-trip preserves the negotiable bits ---
+        for (const [name, desc] of [['offer', offer], ['answer', answer]]) {
+          const packed = packSignal(desc);
+          const back = unpackSignal(packed);
+          const ufrag = desc.sdp.match(/a=ice-ufrag:(.+)/)[1].trim();
+          const pwd = desc.sdp.match(/a=ice-pwd:(.+)/)[1].trim();
+          const fp = desc.sdp.match(/sha-256 ([0-9A-Fa-f:]+)/)[1].toUpperCase();
+          const okType = back.type === desc.type;
+          const okU = back.sdp.includes('a=ice-ufrag:' + ufrag);
+          const okP = back.sdp.includes('a=ice-pwd:' + pwd);
+          const okF = back.sdp.includes('sha-256 ' + fp);
+          const cands = (back.sdp.match(/a=candidate:/g) || []).length;
+          const good = okType && okU && okP && okF;
+          pass = pass && good;
+          log(`L1 ${name}: ${desc.sdp.length}B → ${packed.length}B  ` +
+              `type:${okType?'✓':'✗'} ufrag:${okU?'✓':'✗'} pwd:${okP?'✓':'✗'} ` +
+              `fp:${okF?'✓':'✗'} cand:${cands}`, good ? 'ok' : 'bad');
+        }
+
+        // --- Layer 2: full ggwave encode → decode → reassembly, no hardware ---
+        const packed = packSignal(offer);
+        const tx = new SonicLink({ protocol: proto() }); await tx.init();
+        const rx = new SonicLink(); await rx.init();
+        const got = await new Promise((resolve) => {
+          let done = false;
+          rx.startOffline = true;            // marker only
+          rx._onMessage = (bytes) => { if (!done) { done = true; resolve(bytes); } };
+          // Encode each chunk on tx, feed the waveform through rx's real decode path.
+          for (const frame of tx._frames(packed)) {
+            rx.pushSamples(tx._encodeWave(frame));
+          }
+          if (!done) resolve(null);
+        });
+        if (got && eq(Array.from(got), Array.from(packed))) {
+          const sdp = unpackSignal(got);
+          const okSdp = sdp.sdp.includes('m=application');
+          pass = pass && okSdp;
+          log(`L2 acoustic loopback: ${tx._frames(packed).length} chunks → recovered ` +
+              `${got.length}B, byte-identical, valid SDP:${okSdp?'✓':'✗'}`, okSdp ? 'ok' : 'bad');
+        } else {
+          pass = false;
+          log('L2 acoustic loopback: FAILED to reassemble', 'bad');
+        }
+        tx.destroy(); rx.destroy();
+
+        log('');
+        log(pass ? '✅ ALL AUTOMATED TESTS PASSED' : '❌ SOME TESTS FAILED', pass ? 'ok' : 'bad');
+      } catch (e) {
+        log('Error: ' + (e?.message || e), 'bad');
+      }
+    };
+
+    document.getElementById('selftest').onclick = async () => {
+      reset();
+      bar(0);
+      log('Requesting mic + audio…', 'dim');
+      try {
+        const { offer } = await realDescriptions();
+        const packed = packSignal(offer);
+        const link = new SonicLink({ protocol: proto() });
+        let heard = false;
+        const timeout = setTimeout(() => {
+          if (!heard) { log('No decode after 25s — louder volume / quieter room?', 'bad'); bar(null); cleanup(); }
+        }, 25000);
+        await link.startListening((bytes) => {
+          if (heard) return;
+          heard = true; clearTimeout(timeout); bar(1);
+          const ok = eq(Array.from(bytes), Array.from(packed));
+          log(`Heard ${bytes.length}B over the air — ${ok ? 'byte-identical ✓' : 'MISMATCH ✗'}`,
+              ok ? 'ok' : 'bad');
+          if (ok) { const s = unpackSignal(bytes); log('Rebuilt valid SDP ✓', 'ok'); }
+          cleanup();
+        }, ({ fraction }) => { if (!heard) bar(fraction); });
+        log(`Playing ${link._frames(packed).length} chunks (${packed.length} B) out loud — keep the device still…`, 'dim');
+        await link.send(packed, ({ fraction }) => { if (!heard) bar(fraction); });
+        log('Finished playing; waiting for decode…', 'dim');
+        function cleanup() { try { link.destroy(); } catch {} }
+      } catch (e) {
+        bar(null);
+        log('Mic/audio blocked: ' + (e?.message || e), 'bad');
+      }
+    };
+  </script>
+</body>
+</html>
