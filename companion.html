@@ -17,6 +17,9 @@
   </script>
 
   <style>
+    /* The shared stylesheet locks the page for the main app's fixed layout;
+       the companion page is a normal scrolling document, so re-enable scroll. */
+    html, body { height: auto; min-height: 100%; overflow: auto; -webkit-overflow-scrolling: touch; }
     .hidden { display: none !important; }
     #companion { max-width: 760px; margin: 0 auto; padding: 16px; }
     .bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }

@@ -136,18 +136,30 @@ export class RTCPeer {
     });
   }
 
-  _gathered() {
+  _gathered(timeoutMs = 2500) {
     if (this.pc.iceGatheringState === 'complete') {
       return Promise.resolve(this.pc.localDescription);
     }
+    // Non-trickle, but resilient: iOS Safari often never reports gathering
+    // 'complete' (and may stall on the STUN srflx candidate). So we resolve on
+    // ANY of: gathering complete, end-of-candidates (null icecandidate), or a
+    // short timeout — emitting whatever candidates we have. Host/mDNS candidates
+    // alone are enough on the same LAN (e.g. an iPhone hotspot).
     return new Promise((res) => {
-      const check = () => {
-        if (this.pc.iceGatheringState === 'complete') {
-          this.pc.removeEventListener('icegatheringstatechange', check);
-          res(this.pc.localDescription);
-        }
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        this.pc.removeEventListener('icegatheringstatechange', onChange);
+        this.pc.removeEventListener('icecandidate', onCand);
+        clearTimeout(timer);
+        res(this.pc.localDescription);
       };
-      this.pc.addEventListener('icegatheringstatechange', check);
+      const onChange = () => { if (this.pc.iceGatheringState === 'complete') finish(); };
+      const onCand = (e) => { if (!e.candidate) finish(); };
+      this.pc.addEventListener('icegatheringstatechange', onChange);
+      this.pc.addEventListener('icecandidate', onCand);
+      const timer = setTimeout(finish, timeoutMs);
     });
   }
 }

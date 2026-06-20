@@ -83,21 +83,38 @@ async function startScan() {
 
 // ============================================================ CLIENT (Quest)
 async function initClient() {
-  const { Avatar } = await import('./avatar.js');
-  const { Speaker } = await import('./tts.js');
-  const avatar = new Avatar($('avatar-canvas'));
-  const speaker = new Speaker();
-
   const peer = new RTCPeer({ initiator: true });
   let currentEl = null;
   let connected = false;
+  let offerBlob = null;
+  let avatar = null;
+  let speaker = null;
 
-  // 1) Produce our offer and show it for the gateway to scan/paste.
-  const offerBlob = await peer.createOffer();
-  showLocalSignal(offerBlob);
-  $('signal-title').textContent = '1) Show this to the iPhone  ·  2) paste its reply below';
+  // 1) Produce our offer and show it FIRST, so the pairing code always appears
+  //    even if the optional avatar / voice fail to load (iOS Safari can block
+  //    WebGL or speech). Pairing + text chat must never depend on those.
+  try {
+    offerBlob = await peer.createOffer();
+    showLocalSignal(offerBlob);
+    $('signal-title').textContent = '1) Show this to the iPhone  ·  2) paste its reply below';
+  } catch (e) {
+    setConn('error generating code');
+    $('signal-title').textContent = 'Could not generate a pairing code — ' + (e?.message || e);
+    console.error(e);
+  }
 
-  // 2) Accept the gateway's answer.
+  // 2) Optional richer client: 3D avatar + spoken replies. Failures here are
+  //    non-fatal — the client stays usable as a plain text/voice relay.
+  try {
+    const { Avatar } = await import('./avatar.js');
+    avatar = new Avatar($('avatar-canvas'));
+  } catch (e) { console.warn('Avatar unavailable:', e); }
+  try {
+    const { Speaker } = await import('./tts.js');
+    speaker = new Speaker();
+  } catch (e) { console.warn('Speech synthesis unavailable:', e); }
+
+  // 3) Accept the gateway's answer.
   $('apply-remote').addEventListener('click', async () => {
     const blob = $('remote-blob').value.trim();
     if (!blob) return;
@@ -105,10 +122,11 @@ async function initClient() {
     catch (e) { setConn('bad code'); console.error(e); }
   });
 
-  // 2b) Or pair entirely over sound: emit the offer on a loop while listening
+  // 3b) Or pair entirely over sound: emit the offer on a loop while listening
   //     for the gateway's spoken answer. We stop emitting once we've heard a
   //     valid answer (the gateway keeps emitting until WebRTC actually opens).
   $('sound-btn').addEventListener('click', async () => {
+    if (!offerBlob) { setSound('No pairing code yet — reload the page.'); return; }
     sonicReset();
     let received = false;
     const enc = new TextEncoder(); const dec = new TextDecoder();
@@ -145,16 +163,16 @@ async function initClient() {
   // Streamed reply text.
   peer.on('token', (m) => {
     if (m.type === 'partial') {
-      if (!currentEl) { currentEl = addMessage('tutor', ''); avatar.setSpeaking(true); }
+      if (!currentEl) { currentEl = addMessage('tutor', ''); avatar?.setSpeaking(true); }
       renderTutor(currentEl, m.parsed || { ar: m.text, tr: '', en: '' });
-      avatar.pulse(0.8);
+      avatar?.pulse(0.8);
     } else if (m.type === 'final') {
       if (!currentEl) currentEl = addMessage('tutor', '');
       renderTutor(currentEl, m.parsed || { ar: m.text, tr: '', en: '' });
-      avatar.setSpeaking(false);
+      avatar?.setSpeaking(false);
       currentEl = null;
-      if ($('speak-toggle').checked && m.parsed?.ar) {
-        speaker.speak(m.parsed.ar, { onBoundary: () => avatar.pulse(1) });
+      if (speaker && $('speak-toggle').checked && m.parsed?.ar) {
+        speaker.speak(m.parsed.ar, { onBoundary: () => avatar?.pulse(1) });
       }
     }
   });
