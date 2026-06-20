@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>مُعلّم · Palestinian Arabic Tutor</title>
+  <link rel="stylesheet" href="./css/styles.css" />
+
+  <!-- All libraries load from CDN as ES modules. No build step required. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+      "@huggingface/transformers": "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1/dist/transformers.min.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div id="app">
+    <!-- ===== Avatar stage ===== -->
+    <section id="stage">
+      <canvas id="avatar-canvas"></canvas>
+
+      <div id="status-bar">
+        <span id="status-dot" class="idle"></span>
+        <span id="status-text">Click “Load tutor” to begin</span>
+      </div>
+
+      <div id="loader" class="hidden">
+        <div class="loader-card">
+          <h3>Loading the tutor’s brain…</h3>
+          <p class="loader-sub">First run downloads the models (cached afterwards).</p>
+          <div class="progress"><div id="progress-bar"></div></div>
+          <p id="loader-detail" class="loader-detail"></p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== Conversation panel ===== -->
+    <section id="panel">
+      <header id="panel-header">
+        <div class="brand">
+          <span class="brand-ar" dir="rtl">مُعلّم اللهجة الفلسطينية</span>
+          <span class="brand-en">Palestinian Arabic Tutor</span>
+        </div>
+        <label class="dialect">
+          <span>Dialect</span>
+          <select id="dialect-select">
+            <option value="palestinian" selected>Palestinian (colloquial)</option>
+            <option value="msa">Modern Standard Arabic</option>
+          </select>
+        </label>
+      </header>
+
+      <div id="transcript" aria-live="polite"></div>
+
+      <form id="composer" autocomplete="off">
+        <button type="button" id="mic-btn" title="Hold to speak" disabled>
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3Z"/>
+            <path d="M19 11a7 7 0 0 1-14 0M12 18v3"/>
+          </svg>
+        </button>
+        <input id="text-input" type="text" placeholder="Type in Arabic or English…" dir="auto" disabled />
+        <button type="submit" id="send-btn" disabled>Send</button>
+      </form>
+
+      <div id="controls">
+        <button id="load-btn">Load tutor</button>
+        <label class="toggle">
+          <input type="checkbox" id="speak-toggle" checked />
+          <span>Speak replies</span>
+        </label>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>مُعلّم · Companion (WebRTC)</title>
+  <link rel="stylesheet" href="./css/styles.css" />
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+      "@huggingface/transformers": "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1/dist/transformers.min.js"
+    }
+  }
+  </script>
+
+  <style>
+    .hidden { display: none !important; }
+    #companion { max-width: 760px; margin: 0 auto; padding: 16px; }
+    .bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+    #role-badge { font-weight: 600; padding: 4px 10px; border-radius: 999px; background: #1f2937; color: #fff; font-size: 13px; }
+    #conn-state { font-size: 13px; opacity: 0.8; }
+    #signal-panel { border: 1px solid #334155; border-radius: 12px; padding: 16px; }
+    #signal-title { margin: 0 0 12px; font-size: 15px; }
+    .signal-grid { display: grid; gap: 16px; grid-template-columns: 1fr; }
+    @media (min-width: 620px) { .signal-grid { grid-template-columns: 1fr 1fr; } }
+    .signal-box h4 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; opacity: .7; }
+    textarea.blob { width: 100%; height: 120px; font-family: ui-monospace, monospace; font-size: 11px; resize: vertical; border-radius: 8px; padding: 8px; box-sizing: border-box; }
+    #local-qr { display: block; margin: 8px 0; max-width: 100%; height: auto; background: #fff; border-radius: 8px; }
+    #scan-video { width: 100%; max-width: 320px; border-radius: 8px; display: none; margin-top: 8px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    .row button { padding: 8px 14px; border-radius: 8px; border: 1px solid #475569; background: #1e293b; color: #fff; cursor: pointer; }
+    .row button:hover { background: #334155; }
+
+    /* app panels */
+    #app-panel { margin-top: 8px; }
+    #avatar-wrap { position: relative; }
+    #avatar-canvas { width: 100%; height: 260px; display: block; border-radius: 12px; background: #0b1220; }
+    #status-text { font-size: 13px; opacity: .85; margin: 8px 2px; }
+    #transcript { display: flex; flex-direction: column; gap: 8px; max-height: 46vh; overflow-y: auto; padding: 8px 0; }
+    .msg { padding: 10px 12px; border-radius: 12px; max-width: 88%; }
+    .msg.user { align-self: flex-end; background: #1d4ed8; color: #fff; }
+    .msg.tutor { align-self: flex-start; background: #111827; color: #e5e7eb; }
+    .msg .ar { font-size: 18px; } .msg .translit { opacity: .8; font-style: italic; } .msg .en { opacity: .7; font-size: 13px; }
+    #composer { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+    #mic-btn { width: 44px; height: 44px; border-radius: 50%; border: 1px solid #475569; background: #1e293b; cursor: pointer; }
+    #mic-btn.recording { background: #b91c1c; }
+    #text-input { flex: 1; padding: 10px; border-radius: 10px; border: 1px solid #475569; background: #0b1220; color: #fff; }
+    #send-btn { padding: 10px 16px; border-radius: 10px; border: 0; background: #2563eb; color: #fff; cursor: pointer; }
+    .gw-only, .client-only { display: none; }
+    body[data-role="gateway"] .gw-only { display: block; }
+    body[data-role="client"] .client-only { display: block; }
+    #gw-status { font-size: 14px; margin-top: 8px; }
+  </style>
+</head>
+<body data-role="client">
+  <div id="companion">
+    <div class="bar">
+      <span id="role-badge">…</span>
+      <span id="conn-state">not connected</span>
+    </div>
+
+    <!-- ===== manual signaling ===== -->
+    <section id="signal-panel">
+      <h3 id="signal-title">Connecting…</h3>
+      <div class="signal-grid">
+        <div class="signal-box">
+          <h4>Your code (show this)</h4>
+          <canvas id="local-qr"></canvas>
+          <textarea id="local-blob" class="blob" readonly placeholder="generating…"></textarea>
+          <div class="row"><button id="copy-local" type="button">Copy</button></div>
+        </div>
+        <div class="signal-box">
+          <h4>Their code (paste / scan)</h4>
+          <textarea id="remote-blob" class="blob" placeholder="Paste the other device's code here"></textarea>
+          <div class="row">
+            <button id="apply-remote" type="button">Connect</button>
+            <button id="scan-btn" type="button">Scan with camera</button>
+          </div>
+          <video id="scan-video" playsinline muted></video>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== app (revealed once connected) ===== -->
+    <section id="app-panel" class="hidden">
+      <!-- client (Quest) -->
+      <div class="client-only">
+        <div id="avatar-wrap"><canvas id="avatar-canvas"></canvas></div>
+        <div id="status-text">Connected.</div>
+        <div id="transcript" aria-live="polite"></div>
+        <div id="composer">
+          <button id="mic-btn" type="button" title="Hold to speak" disabled></button>
+          <select id="dialect-select">
+            <option value="palestinian" selected>Palestinian</option>
+            <option value="msa">MSA</option>
+          </select>
+          <input id="text-input" type="text" placeholder="Type in Arabic or English…" disabled />
+          <button id="send-btn" type="button" disabled>Send</button>
+          <label><input id="speak-toggle" type="checkbox" checked /> Speak</label>
+        </div>
+      </div>
+    </section>
+
+    <!-- gateway (iPhone) status -->
+    <div class="gw-only">
+      <div id="gw-status">Waiting to connect…</div>
+    </div>
+  </div>
+
+  <script type="module" src="./js/companion.js"></script>
+</body>
+</html>
