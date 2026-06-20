@@ -105,6 +105,54 @@ function makeConfigCappingFetch(baseFetch, limits, requested, emit) {
   };
 }
 
+// The runtime serves config.json from the Cache API (caches 'bonsai-pipeline-v1')
+// BEFORE consulting our fetch hook, so on any repeat load the original uncapped
+// config is used. Rewrite the cached config.json in place so the cap actually
+// takes effect. Scans every cache to be robust to cache-name changes.
+async function patchCachedConfig(limits, requested, emit) {
+  try {
+    if (!globalThis.caches?.keys) { emit?.('Cache API unavailable — relying on fetch cap'); return; }
+    const names = await caches.keys();
+    for (const name of names) {
+      const cache = await caches.open(name);
+      const reqs = await cache.keys();
+      for (const req of reqs) {
+        let path;
+        try { path = new URL(req.url).pathname; } catch { continue; }
+        if (!path.endsWith('/config.json')) continue;
+
+        const hit = await cache.match(req);
+        if (!hit) continue;
+        const cfg = await hit.clone().json().catch(() => null);
+        if (!cfg || typeof cfg.num_hidden_layers !== 'number') continue; // not the model config
+
+        const defaultCap = Math.max(1, Math.min(HARD_CAP, cfg.max_position_embeddings ?? HARD_CAP));
+        const cap = chooseKvCapacity(cfg, limits, requested);
+        const { perToken, nonShared, kvOut } = kvBytesPerToken(cfg);
+        emit?.(`KV cache: ${nonShared}L × kvOut ${kvOut} f32 = ${(perToken / 1024).toFixed(0)}KB/token`);
+        if (cap >= defaultCap) {
+          emit?.(`KV cap: keeping default ${defaultCap} tokens (~${mbStr(defaultCap * perToken)})`);
+          return;
+        }
+        Tutor._lastKvCapacity = cap;
+        if (cfg.max_position_embeddings === cap) {
+          emit?.(`KV cap: cached config already ${cap} tokens (~${mbStr(cap * perToken)})`);
+          return;
+        }
+        cfg.max_position_embeddings = cap;
+        await cache.put(req, new Response(JSON.stringify(cfg), {
+          headers: { 'content-type': 'application/json' },
+        }));
+        emit?.(`KV cap: patched cached config → ${cap} tokens (~${mbStr(cap * perToken)}) — was ${defaultCap} (~${mbStr(defaultCap * perToken)}) [maxBufferSize ${mbStr(Number(limits?.maxBufferSize))}]`);
+        return;
+      }
+    }
+    emit?.('config.json not cached yet — will cap on first download');
+  } catch (e) {
+    emit?.('cache config patch failed: ' + (e?.message || e));
+  }
+}
+
 export class Tutor {
   constructor() {
     this.model = null;
@@ -116,18 +164,32 @@ export class Tutor {
   async load(onProgress, opts = {}) {
     const { limits = null, emit = null, maxContextTokens = null } = opts;
     Tutor._lastKvCapacity = null;
+    // Cap the KV cache BEFORE load: patch the cached config.json (repeat loads
+    // read it from the Cache API and bypass the fetch hook below).
+    await patchCachedConfig(limits, maxContextTokens, emit);
     // Gemma4Mobile.load drives its own download/compile pipeline and reports
     // progress via {status, kind, fraction, message}. Translate that into the
     // {status:'progress', file, progress} shape main.js's onProgress expects.
+    let lastWeightPct = -100;
+    let lastTensorPct = -100;
     this.model = await Gemma4Mobile.load(null, {
       fetch: makeConfigCappingFetch(undefined, limits, maxContextTokens, emit),
       onProgress: (e) => {
         if (e.status === 'weights' && e.kind === 'bytes') {
           const pct = typeof e.fraction === 'number' ? e.fraction * 100 : 0;
           onProgress?.({ status: 'progress', file: 'gemma-4-E2B', progress: pct, loadedBytes: e.loaded, totalBytes: e.total });
+          // Throttled weight-download trail so we can see how far it gets.
+          if (emit && (pct - lastWeightPct >= 20 || pct >= 100)) {
+            lastWeightPct = pct;
+            emit(`weights ${mbStr(e.loaded)}${e.total ? ' / ' + mbStr(e.total) : ''} (${pct.toFixed(0)}%)`);
+          }
         } else if (e.status === 'weights' && e.kind === 'tensors') {
           const pct = typeof e.fraction === 'number' ? e.fraction * 100 : 0;
           onProgress?.({ status: 'progress', file: 'gemma-4-E2B', progress: pct });
+          if (emit && (pct - lastTensorPct >= 25 || pct >= 100)) {
+            lastTensorPct = pct;
+            emit(`tensors → GPU ${pct.toFixed(0)}%`);
+          }
         } else if (e.status === 'ready') {
           onProgress?.({ status: 'done' });
         }
@@ -136,8 +198,10 @@ export class Tutor {
     // Remember the (possibly capped) context length so reply() can keep the
     // conversation history from overflowing the KV cache.
     this.maxContextTokens = Tutor._lastKvCapacity || HARD_CAP;
+    emit?.(`model constructed (KV cache allocated @ ${this.maxContextTokens} tokens) — starting warmup`);
     // Compile/warm the WebGPU kernels so the first real reply isn't slow.
     await this.model.warmup();
+    emit?.('warmup complete');
   }
 
 
