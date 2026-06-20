@@ -91,17 +91,19 @@ async function loadEverything() {
   // On-device WebGPU diagnostics: surfaces device-lost / OOM reasons and a crash
   // trail that survives a tab reload (an iOS OOM kill wipes the console).
   let diag = { emit() {}, stage() {} };
+  let gpuLimits = null;
   try {
     const { installGpuDiagnostics, probeWebGPU } = await import('./gpu-diag.js');
     diag = installGpuDiagnostics({ showPanel: true });
     diag.stage('probe WebGPU');
-    await probeWebGPU(diag.emit);
+    const probe = await probeWebGPU(diag.emit);
+    gpuLimits = probe?.limits || null;
   } catch (e) { console.warn('diag unavailable', e); }
 
   try {
     diag.stage('load Gemma-4 weights + warmup');
     loaderDetail.textContent = 'Loading the language model (Gemma 4)…';
-    await tutor.load(onProgress);
+    await tutor.load(onProgress, { limits: gpuLimits, emit: diag.emit });
     diag.stage('load Whisper');
     loaderDetail.textContent = 'Loading speech recognition (Whisper)…';
     await stt.load(onProgress);

@@ -453,11 +453,13 @@ async function initGateway() {
     // On-device WebGPU diagnostics: surfaces device-lost / OOM reasons and a
     // crash trail that survives an iOS tab reload (no DevTools needed).
     let diag = { emit() {}, stage() {} };
+    let gpuLimits = null;
     try {
       const { installGpuDiagnostics, probeWebGPU } = await import('./gpu-diag.js');
       diag = installGpuDiagnostics({ showPanel: true });
       diag.stage('probe WebGPU');
-      await probeWebGPU(diag.emit);
+      const probe = await probeWebGPU(diag.emit);
+      gpuLimits = probe?.limits || null;
     } catch (e) { console.warn('diag unavailable', e); }
     try {
       diag.stage('import @huggingface/transformers');
@@ -477,7 +479,7 @@ async function initGateway() {
           log(`Loading Gemma-4 — ${pct}%`);
           if (p.totalBytes) diag.emit(`weights ${mbStr(p.loadedBytes)} / ${mbStr(p.totalBytes)} (${pct}%)`);
         }
-      });
+      }, { limits: gpuLimits, emit: diag.emit });
       diag.stage('ready');
       log('Ready.'); toClient('Ready — say or type something in Arabic!');
     } catch (e) {
