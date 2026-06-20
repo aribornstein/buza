@@ -33,6 +33,22 @@ function sonicReset() {
   sonic = new SonicLink(); sonicTx = null;
 }
 
+// A tiny "got it" beep the gateway emits the instant it has decoded the FULL
+// offer. It's the explicit signal for the client to STOP transmitting and start
+// listening for the reply — without it the client can only guess (and talks over
+// the answer). It's far shorter than a real signal (≈139 B), so length alone
+// distinguishes it from an offer/answer payload.
+// Tiny handshake markers (one ggwave chunk each, ~sub-second) used to hand the
+// half-duplex acoustic channel cleanly from one side to the other:
+//   ACK = gateway → client: "I have your full offer, stop transmitting."
+//   RDY = client → gateway: "I'm silent and listening, send the answer now."
+// Both are 3 bytes and told apart by content; a real signal is ~139 bytes.
+const ACK_BYTES = new TextEncoder().encode('ACK');
+const RDY_BYTES = new TextEncoder().encode('RDY');
+const bytesEq = (b, ref) => b.length === ref.length && b.every((v, i) => v === ref[i]);
+const isAck = (b) => bytesEq(b, ACK_BYTES);
+const isRdy = (b) => bytesEq(b, RDY_BYTES);
+
 // Pairing progress bar. Pass a 0..1 fraction to show/update it, or null to hide.
 function setProgress(frac) {
   const wrap = $('sonic-progress'); const bar = $('sonic-bar');
@@ -151,40 +167,60 @@ async function initClient() {
     setProgress(0);
     let received = false;
     let emitting = false;
+    let acked = false;
+    let rdyBusy = false;
     // Half-duplex over one acoustic channel: while we're emitting the offer our
     // own (loud) tone masks the iPhone's reply, so we can't just blast the offer
-    // on a loop. Instead we take turns — emit the offer ONCE, then go quiet and
-    // listen for long enough to capture a full reply, and only re-emit if the
-    // iPhone didn't answer. The gateway keeps replying until WebRTC connects.
+    // on a loop. We emit the offer ONCE, then go quiet and wait for the iPhone's
+    // ACK beep. When we hear it we stop emitting for good and fire a short RDY
+    // beep back so the iPhone knows the channel is clear and can send the answer.
     const waitUntil = (cond, ms) => new Promise((resolve) => {
       const t0 = Date.now();
       const iv = setInterval(() => {
         if (cond() || Date.now() - t0 >= ms) { clearInterval(iv); resolve(); }
       }, 120);
     });
+    // Confirm readiness to the iPhone. Guarded so overlapping ACKs don't stack
+    // up multiple RDY chirps on top of each other.
+    const sendReady = async () => {
+      if (rdyBusy || received || connected) return;
+      rdyBusy = true;
+      try { await sonicTx.send(RDY_BYTES); } catch { /* noop */ }
+      rdyBusy = false;
+    };
     try {
       await sonic.startListening(async (bytes) => {
         if (received || connected) return;
+        if (isAck(bytes)) { // the iPhone has our full offer → stop transmitting
+          if (!acked) { acked = true; setSound('iPhone got the code — telling it I’m ready…'); }
+          if (!emitting) sendReady(); // (re)confirm; self-heals a dropped RDY
+          return;
+        }
         try {
           await peer.acceptAnswer(packedToBlob(bytes));
           received = true; setProgress(1); setSound('Heard the iPhone — connecting…'); setConn('connecting…');
         } catch { /* probably heard our own offer; keep listening */ }
       }, ({ fraction, receivedBytes, totalBytes }) => {
-        if (received || emitting) return; // while emitting, the bar shows our outgoing offer
+        if (received || emitting || acked) return; // while emitting, the bar shows our outgoing offer
         setProgress(fraction);
         setSound(totalBytes ? `Hearing the iPhone’s reply… ${receivedBytes}/${totalBytes} B` : 'Listening for the iPhone…');
       });
       setSound('Hold the phone close — pairing over sound…');
-      for (let attempt = 0; attempt < 6 && !received && !connected; attempt++) {
+      for (let attempt = 0; attempt < 8 && !received && !connected && !acked; attempt++) {
         emitting = true;
         await sonicTx.send(blobToPacked(offerBlob), ({ fraction, sentBytes, totalBytes }) => {
           if (!received) { setProgress(fraction); setSound(`Emitting offer… ${sentBytes}/${totalBytes} B`); }
         });
         emitting = false;
-        if (received || connected) break;
-        // Go quiet and let the iPhone reply — long enough for a full answer tone.
-        setProgress(0); setSound('Offer sent — listening for the iPhone’s reply…');
-        await waitUntil(() => received || connected, 18000);
+        if (received || connected || acked) break;
+        // Go quiet and wait for the iPhone's ACK; if none arrives, re-emit.
+        setProgress(0); setSound('Offer sent — waiting for the iPhone to confirm…');
+        await waitUntil(() => received || connected || acked, 5000);
+      }
+      // Acknowledged: stop emitting for good and listen for the (longer) answer.
+      if (acked && !received && !connected) {
+        setProgress(0); setSound('iPhone got it — listening for its reply…');
+        await waitUntil(() => received || connected, 30000);
       }
       if (!received && !connected) setSound('No reply heard — move the phone closer and tap again.');
     } catch (e) { setProgress(null); setSound('Microphone/audio blocked: ' + (e?.message || e)); }
@@ -325,24 +361,62 @@ async function initGateway() {
   // answer chirp doesn't collide with itself on the mic.
   $('sound-btn').addEventListener('click', async () => {
     sonicReset();
+    // The gateway listens on `sonic` and transmits on a separate `sonicTx` so it
+    // can keep an ear open for the Quest's RDY beep while it's chirping ACKs —
+    // one ggwave instance can't encode and decode at the same time.
+    sonicTx = new SonicLink();
     setProgress(0);
     let gotOffer = false;
+    let ready = false;
+    let answerBytes = null;
+    const delay = (ms) => new Promise((r) => setTimeout(r, ms));
+    const waitUntil = (cond, ms) => new Promise((resolve) => {
+      const t0 = Date.now();
+      const iv = setInterval(() => {
+        if (cond() || Date.now() - t0 >= ms) { clearInterval(iv); resolve(); }
+      }, 120);
+    });
     try {
       await sonic.startListening(async (bytes) => {
-        if (gotOffer || connected) return;
+        if (connected) return;
+        if (isRdy(bytes)) { ready = true; return; } // Quest is silent and listening
+        if (gotOffer) return; // ignore our own echo / repeats once we have the offer
         try {
           const answer = await peer.createAnswer(packedToBlob(bytes), { fastIce: true });
-          gotOffer = true; setProgress(1); sonic.stopListening();
+          gotOffer = true; setProgress(1);
           showLocalSignal(answer);
-          setSound('Heard the Quest — replying over sound…'); setConn('connecting…');
-          await sonic.sendUntil(blobToPacked(answer), () => connected, {
-            onProgress: ({ fraction, sentBytes, totalBytes }) => { if (!connected) { setProgress(fraction); setSound(`Replying over sound… ${sentBytes}/${totalBytes} B`); } },
-          });
+          setConn('connecting…');
+          answerBytes = blobToPacked(answer);
         } catch { /* heard noise or our own audio; keep listening */ }
       }, ({ fraction, receivedBytes, totalBytes }) => {
         if (!gotOffer) { setProgress(fraction); setSound(totalBytes ? `Hearing the Quest’s code… ${receivedBytes}/${totalBytes} B` : 'Listening for the Quest…'); }
       });
       setSound('Hold the phone close to the headset. Listening for the Quest…');
+      // Wait until we've decoded the full offer.
+      await waitUntil(() => gotOffer || connected, 60000);
+      if (gotOffer && !connected) {
+        // Phase A — handshake. Chirp a short ACK and listen for the Quest's RDY.
+        // Cheap to repeat, so a missed ACK costs ~2s, not a whole answer.
+        for (let i = 0; i < 10 && !ready && !connected; i++) {
+          setSound('Heard the Quest — telling it to listen…');
+          await sonicTx.send(ACK_BYTES);
+          if (ready || connected) break;
+          await waitUntil(() => ready || connected, 2500);
+        }
+        // Phase B — payload. Channel is clear; stream the answer until WebRTC
+        // opens. Re-ACK between tries in case the Quest fell back to emitting.
+        while (!connected) {
+          setSound('Replying over sound…');
+          await sonicTx.send(answerBytes, ({ fraction, sentBytes, totalBytes }) => {
+            if (!connected) { setProgress(fraction); setSound(`Replying over sound… ${sentBytes}/${totalBytes} B`); }
+          });
+          if (connected) break;
+          await delay(300);
+          if (connected) break;
+          await sonicTx.send(ACK_BYTES); // nudge a Quest that stopped listening
+          await delay(300);
+        }
+      }
     } catch (e) { setProgress(null); setSound('Microphone/audio blocked: ' + (e?.message || e)); }
   });
 
@@ -352,6 +426,8 @@ async function initGateway() {
     setConn('connected');
     setProgress(1);
     setSound('Paired ✓');
+    try { sonic?.destroy(); } catch { /* noop */ }
+    try { sonicTx?.destroy(); } catch { /* noop */ }
     toClient('Loading models on iPhone…');
     log('Loading Whisper + Gemma-4…');
     try {
