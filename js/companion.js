@@ -209,6 +209,23 @@ async function initClient() {
   const unlockTTS = () => speaker?.unlock();
   window.addEventListener('pointerdown', unlockTTS);
 
+  // On-screen TTS debug overlay (iOS has no console). Toggle with ?ttsdebug=1.
+  const TTS_DEBUG = /[?&]ttsdebug=1\b/.test(location.search);
+  let ttsLogEl = null;
+  const ttsDebug = (msg) => {
+    if (!TTS_DEBUG) return;
+    if (!ttsLogEl) {
+      ttsLogEl = document.createElement('div');
+      ttsLogEl.style.cssText =
+        'position:fixed;left:6px;right:6px;bottom:6px;z-index:9999;max-height:34vh;overflow:auto;' +
+        'font:11px/1.35 ui-monospace,Menlo,monospace;white-space:pre-wrap;background:#0b1020ee;' +
+        'color:#d6e2ff;border-radius:8px;padding:8px;';
+      document.body.appendChild(ttsLogEl);
+    }
+    const t = new Date().toISOString().slice(11, 23);
+    ttsLogEl.textContent = `${t}  ${msg}\n` + ttsLogEl.textContent;
+  };
+
   // 3) Accept the gateway's answer.
   $('apply-remote').addEventListener('click', async () => {
     const blob = $('remote-blob').value.trim();
@@ -295,8 +312,16 @@ async function initClient() {
       renderTutor(currentEl, m.parsed || { ar: m.text, tr: '', en: '' });
       avatar?.setSpeaking(false);
       currentEl = null;
-      if (speaker && $('speak-toggle').checked && m.parsed?.ar) {
-        speaker.speak(m.parsed.ar, { onBoundary: () => avatar?.pulse(1) });
+      const ar = m.parsed?.ar || '';
+      ttsDebug(`final: speaker=${!!speaker} toggle=${$('speak-toggle').checked} arLen=${ar.length} ` +
+        `synth(speaking=${speechSynthesis.speaking} pending=${speechSynthesis.pending} paused=${speechSynthesis.paused})`);
+      if (speaker && $('speak-toggle').checked && ar) {
+        ttsDebug('→ calling speaker.speak()');
+        speaker.speak(ar, {
+          onStart: () => ttsDebug('▶ onStart'),
+          onBoundary: () => avatar?.pulse(1),
+          onEnd: () => ttsDebug('✓ onEnd'),
+        });
       }
     }
   });
