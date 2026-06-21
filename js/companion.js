@@ -216,7 +216,7 @@ async function initClient() {
 
   // On-screen TTS debug overlay (iOS has no console). Always on for now while we
   // chase the no-audio bug; the version stamp confirms which code is running.
-  const TTS_BUILD = 'tts-debug-2026-06-21h';
+  const TTS_BUILD = 'tts-debug-2026-06-21i';
   let ttsLogEl = null;
   const ttsLines = [];
   const ttsDebug = (msg) => {
@@ -360,8 +360,7 @@ async function initClient() {
     ttsDebug(`open → claimOutput audioSession=${navigator.audioSession?.type || 'n/a'}`);
     $('signal-panel').classList.add('hidden');
     $('app-panel').classList.remove('hidden');
-    setStatus('Connected — say or type something in Arabic!');
-    enableComposer(true);
+    playWelcome();
   });
 
   // Gateway → client control messages (status + recognized speech).
@@ -455,6 +454,50 @@ async function initClient() {
     $('mic-btn').disabled = !on; $('send-btn').disabled = !on; $('text-input').disabled = !on;
   }
   function setStatus(t) { $('status-text').textContent = t; }
+
+  // On connect, greet the learner out loud BEFORE enabling input. Besides being
+  // friendly, speaking here "warms" the iOS audio route right after the session
+  // switches to playback, so the first real reply isn't the utterance that gets
+  // dropped during the category change. The composer is re-enabled when the
+  // greeting ends (or after a safety timeout, so input is never left disabled).
+  let welcomed = false;
+  function playWelcome() {
+    if (welcomed) return;
+    welcomed = true;
+    const WELCOME = {
+      ar: 'أهلاً وسهلاً! أنا معلّمك للعربي. يلّا نبدأ.',
+      tr: "Ahlan wa sahlan! Ana mʿallmak lal-ʿarabi. Yalla nabda.",
+      en: "Welcome! I'm your Arabic teacher. Let's begin.",
+    };
+    renderTutor(addMessage('tutor', ''), WELCOME);
+
+    enableComposer(false);
+    setStatus('Greeting you…');
+    let enabled = false;
+    const enable = () => {
+      if (enabled) return;
+      enabled = true;
+      setStatus('Connected — say or type something in Arabic!');
+      enableComposer(true);
+    };
+
+    if (speaker && $('speak-toggle').checked) {
+      // claimOutput() just switched the session to playback; give the iOS audio
+      // route a moment to settle before the utterance so it isn't dropped.
+      setTimeout(() => {
+        ttsDebug('welcome → speak()');
+        speaker.speak(WELCOME.ar, {
+          onStart: () => ttsDebug('welcome ▶ onStart'),
+          onEnd: () => { ttsDebug('welcome ✓ onEnd'); enable(); },
+          onError: (e) => { ttsDebug('welcome ❌ ' + (e?.error || e)); enable(); },
+        });
+        // Fallback: never leave the composer disabled if no speech events fire.
+        setTimeout(enable, 6000);
+      }, 500);
+    } else {
+      enable();
+    }
+  }
   function addMessage(roleName, content) {
     const el = document.createElement('div');
     el.className = `msg ${roleName}`;
