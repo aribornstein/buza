@@ -203,17 +203,11 @@ async function initClient() {
     speaker = new Speaker();
   } catch (e) { console.warn('Speech synthesis unavailable:', e); }
 
-  // iOS Safari blocks speech until it's first triggered inside a user gesture,
-  // and can re-pause the synth later. Re-assert on every tap (unlock() is a
-  // cheap no-op once primed and won't interrupt a reply that's playing).
-  const unlockTTS = () => speaker?.unlock();
-  window.addEventListener('pointerdown', unlockTTS);
-
-  // On-screen TTS debug overlay (iOS has no console). Toggle with ?ttsdebug=1.
-  const TTS_DEBUG = /[?&]ttsdebug=1\b/.test(location.search);
+  // On-screen TTS debug overlay (iOS has no console). Always on for now while we
+  // chase the no-audio bug; the version stamp confirms which code is running.
+  const TTS_BUILD = 'tts-debug-2026-06-21c';
   let ttsLogEl = null;
   const ttsDebug = (msg) => {
-    if (!TTS_DEBUG) return;
     if (!ttsLogEl) {
       ttsLogEl = document.createElement('div');
       ttsLogEl.style.cssText =
@@ -225,6 +219,16 @@ async function initClient() {
     const t = new Date().toISOString().slice(11, 23);
     ttsLogEl.textContent = `${t}  ${msg}\n` + ttsLogEl.textContent;
   };
+  ttsDebug(`build=${TTS_BUILD} speaker=${!!speaker} iosVoice=${speaker?.hasArabicVoice}`);
+
+  // iOS Safari blocks speech until it's first triggered inside a user gesture,
+  // and can re-pause the synth later. Re-assert on every tap (unlock() is a
+  // cheap no-op once primed and won't interrupt a reply that's playing).
+  const unlockTTS = () => {
+    speaker?.unlock();
+    ttsDebug(`tap → unlock() warm=${speaker?._warm} synth.speaking=${speechSynthesis.speaking}`);
+  };
+  window.addEventListener('pointerdown', unlockTTS);
 
   // 3) Accept the gateway's answer.
   $('apply-remote').addEventListener('click', async () => {
