@@ -216,7 +216,7 @@ async function initClient() {
 
   // On-screen TTS debug overlay (iOS has no console). Always on for now while we
   // chase the no-audio bug; the version stamp confirms which code is running.
-  const TTS_BUILD = 'tts-debug-2026-06-21i';
+  const TTS_BUILD = 'tts-debug-2026-06-21k';
   let ttsLogEl = null;
   const ttsLines = [];
   const ttsDebug = (msg) => {
@@ -408,6 +408,9 @@ async function initClient() {
   function sendText() {
     const text = $('text-input').value.trim();
     if (!text) return;
+    // iOS: this click/Enter is a user gesture — start a near-silent keep-alive so
+    // the engine stays warm until the reply arrives and can be spoken.
+    if (speaker && $('speak-toggle').checked) { speaker.hold(); ttsDebug('send → hold()'); }
     addMessage('user', text);
     peer.send({ type: 'text', text, dialect: $('dialect-select').value });
     $('text-input').value = '';
@@ -434,6 +437,9 @@ async function initClient() {
     // Mic is released; hand the audio session back to output mode now so the
     // route is settled before the gateway's spoken reply arrives.
     speaker?.claimOutput();
+    // Still within the mic-release gesture window: start a near-silent keep-alive
+    // so the engine stays warm until the (out-of-gesture) reply can be spoken.
+    if (speaker && $('speak-toggle').checked) { speaker.hold(); ttsDebug('mic release → hold()'); }
     const blob = new Blob(chunks, { type: recorder.mimeType });
     recorder = null; micBtn.classList.remove('recording'); setStatus('Transcribing on the gateway…');
     peer.send({ type: 'dialect', value: $('dialect-select').value });

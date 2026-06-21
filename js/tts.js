@@ -9,6 +9,7 @@ export class Speaker {
   constructor() {
     this.voice = null;
     this._unlocked = false;
+    this._holding = false;
     this.ready = this._pickVoice();
   }
 
@@ -71,6 +72,32 @@ export class Speaker {
     return this._claimAudioOutput();
   }
 
+  // Keep the iOS speech engine warm between a user gesture (Send / mic release)
+  // and the reply that arrives seconds later out-of-gesture. iOS only *starts*
+  // an utterance within ~5s of a gesture, BUT if the engine is already speaking
+  // it keeps going — so from the gesture we loop a near-silent utterance that
+  // holds speechSynthesis.speaking=true until the reply is queued. (volume:0 and
+  // empty utterances are skipped by iOS, so we use whitespace at a low non-zero
+  // volume.) speak() then queues the reply WITHOUT cancelling, so the engine
+  // never idles and re-locks.
+  hold() {
+    if (!IS_IOS) return;
+    this._holding = true;
+    try { speechSynthesis.resume(); } catch { /* noop */ }
+    this._holdLoop();
+  }
+
+  _holdLoop() {
+    if (!this._holding) return;
+    const u = new SpeechSynthesisUtterance('\u00a0\u00a0\u00a0\u00a0\u00a0'); // silent (nbsp)
+    u.volume = 0.02; // low but non-zero so iOS doesn't skip it
+    u.rate = 0.6;    // a few hundred ms each, re-queued back-to-back with no gap
+    u.onend = () => { if (this._holding) this._holdLoop(); };
+    try { speechSynthesis.speak(u); } catch { /* noop */ }
+  }
+
+  releaseHold() { this._holding = false; }
+
   // iOS Safari refuses to speak unless speechSynthesis was first triggered from
   // inside a user gesture, and that permission only lasts a short window after
   // the gesture. The client re-calls this on every pointerdown so the window
@@ -96,12 +123,19 @@ export class Speaker {
     await Promise.race([this.ready, new Promise((r) => setTimeout(r, 1500))]);
     this._ensureVoice();
 
+    // If a keep-alive hold has been bridging us since the last gesture, take it
+    // over: stop the loop and queue the reply WITHOUT cancelling, so the engine
+    // never idles between the silent filler and the real utterance (cancelling
+    // would re-lock speech on iOS out-of-gesture).
+    const wasHolding = this._holding;
+    this._holding = false;
+
     // The pattern proven to work on iOS (out-of-gesture, after a recent unlock):
     // resume() → cancel() → speak(). Skipping cancel() leaves the reply stuck
     // behind an idle/parked synth and it never starts.
     const switched = this._claimAudioOutput();
     speechSynthesis.resume();
-    speechSynthesis.cancel();
+    if (!wasHolding) speechSynthesis.cancel();
 
     return new Promise((resolve) => {
       const u = new SpeechSynthesisUtterance(text);
