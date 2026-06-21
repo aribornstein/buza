@@ -48,6 +48,17 @@ export class Speaker {
 
   get hasArabicVoice() { this._ensureVoice(); return !!this.voice; }
 
+  // On iOS, using the mic (e.g. pairing by sound) switches the audio session to
+  // a record category that mutes speechSynthesis for the rest of the page's
+  // life. iOS Safari 16.4+ lets us reclaim the speaker for output by setting the
+  // audio session type to 'playback'. Safe no-op where the API is absent.
+  _claimAudioOutput() {
+    try {
+      const s = navigator.audioSession;
+      if (s && s.type !== 'playback') s.type = 'playback';
+    } catch { /* noop */ }
+  }
+
   // iOS Safari refuses to speak unless speechSynthesis was first triggered from
   // inside a user gesture, and that permission only lasts a short window after
   // the gesture. The client re-calls this on every pointerdown so the window
@@ -55,6 +66,7 @@ export class Speaker {
   // real utterance (volume:0 utterances are skipped by iOS and don't count).
   unlock() {
     try {
+      this._claimAudioOutput();
       speechSynthesis.resume();
       this._unlocked = true;
       // Don't interrupt a reply that's currently playing.
@@ -67,8 +79,8 @@ export class Speaker {
     } catch { /* noop */ }
   }
 
-  // Speaks `text`. Callbacks: onStart, onBoundary (per word), onEnd.
-  async speak(text, { onStart, onBoundary, onEnd } = {}) {
+  // Speaks `text`. Callbacks: onStart, onBoundary (per word), onEnd, onError.
+  async speak(text, { onStart, onBoundary, onEnd, onError } = {}) {
     // Don't let a stuck voices-promise block speech indefinitely.
     await Promise.race([this.ready, new Promise((r) => setTimeout(r, 1500))]);
     this._ensureVoice();
@@ -76,6 +88,7 @@ export class Speaker {
     // The pattern proven to work on iOS (out-of-gesture, after a recent unlock):
     // resume() → cancel() → speak(). Skipping cancel() leaves the reply stuck
     // behind an idle/parked synth and it never starts.
+    this._claimAudioOutput();
     speechSynthesis.resume();
     speechSynthesis.cancel();
 
@@ -95,7 +108,7 @@ export class Speaker {
       u.onstart = () => onStart?.();
       u.onboundary = () => onBoundary?.();
       u.onend = finish;
-      u.onerror = finish;
+      u.onerror = (e) => { onError?.(e); finish(); };
 
       speechSynthesis.speak(u);
       // iOS sometimes parks the synth in a paused state right after speak();

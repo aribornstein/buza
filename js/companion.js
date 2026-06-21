@@ -205,7 +205,7 @@ async function initClient() {
 
   // On-screen TTS debug overlay (iOS has no console). Always on for now while we
   // chase the no-audio bug; the version stamp confirms which code is running.
-  const TTS_BUILD = 'tts-debug-2026-06-21d';
+  const TTS_BUILD = 'tts-debug-2026-06-21f';
   let ttsLogEl = null;
   const ttsLines = [];
   const ttsDebug = (msg) => {
@@ -234,13 +234,24 @@ async function initClient() {
       return b;
     };
     const copyBtn = mkBtn('copy'), clearBtn = mkBtn('clear'), hideBtn = mkBtn('–');
+    const testBtn = mkBtn('🔊test');
     const body = document.createElement('div');
     body.style.cssText = 'max-height:26vh;overflow:auto;white-space:pre-wrap;padding:6px 7px;';
-    bar.append(title, copyBtn, clearBtn, hideBtn);
+    bar.append(title, testBtn, copyBtn, clearBtn, hideBtn);
     wrap.append(bar, body);
     document.body.appendChild(wrap);
     ttsLogEl = body;
     ttsLogEl._collapsed = false;
+    // Speak from a DIRECT tap inside this page. If this is silent too, the issue
+    // is environmental (audio session muted by the mic), not the gesture window.
+    testBtn.addEventListener('click', () => {
+      ttsDebug(`🔊test tap: synth(speaking=${speechSynthesis.speaking} pending=${speechSynthesis.pending} paused=${speechSynthesis.paused})`);
+      speaker?.speak('مَرحَبا، هَذا اختِبار', {
+        onStart: () => ttsDebug('🔊test ▶ onStart'),
+        onEnd: () => ttsDebug('🔊test ✓ onEnd'),
+        onError: (e) => ttsDebug('🔊test ❌ onError: ' + (e?.error || e)),
+      });
+    });
     copyBtn.addEventListener('click', async () => {
       try { await navigator.clipboard.writeText(ttsLines.join('\n')); copyBtn.textContent = 'copied'; }
       catch { /* select fallback */ const r = document.createRange(); r.selectNodeContents(body);
@@ -256,13 +267,14 @@ async function initClient() {
     });
   }
   ttsDebug(`build=${TTS_BUILD} speaker=${!!speaker} iosVoice=${speaker?.hasArabicVoice}`);
+  ttsDebug(`audioSession=${navigator.audioSession ? navigator.audioSession.type : 'unsupported'}`);
 
   // iOS Safari blocks speech until it's first triggered inside a user gesture,
   // and can re-pause the synth later. Re-assert on every tap (unlock() is a
   // cheap no-op once primed and won't interrupt a reply that's playing).
   const unlockTTS = () => {
     speaker?.unlock();
-    ttsDebug(`tap → unlock() synth.speaking=${speechSynthesis.speaking} pending=${speechSynthesis.pending}`);
+    ttsDebug(`tap → unlock() synth.speaking=${speechSynthesis.speaking} audioSession=${navigator.audioSession?.type || 'n/a'}`);
   };
   window.addEventListener('pointerdown', unlockTTS);
 
@@ -361,7 +373,9 @@ async function initClient() {
           onStart: () => ttsDebug('▶ onStart'),
           onBoundary: () => avatar?.pulse(1),
           onEnd: () => ttsDebug('✓ onEnd'),
+          onError: (e) => ttsDebug('❌ onError: ' + (e?.error || e)),
         });
+        setTimeout(() => ttsDebug(`+300ms synth(speaking=${speechSynthesis.speaking} pending=${speechSynthesis.pending} paused=${speechSynthesis.paused})`), 300);
       }
     }
   });
