@@ -207,18 +207,54 @@ async function initClient() {
   // chase the no-audio bug; the version stamp confirms which code is running.
   const TTS_BUILD = 'tts-debug-2026-06-21c';
   let ttsLogEl = null;
+  const ttsLines = [];
   const ttsDebug = (msg) => {
-    if (!ttsLogEl) {
-      ttsLogEl = document.createElement('div');
-      ttsLogEl.style.cssText =
-        'position:fixed;left:6px;right:6px;bottom:6px;z-index:9999;max-height:34vh;overflow:auto;' +
-        'font:11px/1.35 ui-monospace,Menlo,monospace;white-space:pre-wrap;background:#0b1020ee;' +
-        'color:#d6e2ff;border-radius:8px;padding:8px;';
-      document.body.appendChild(ttsLogEl);
-    }
     const t = new Date().toISOString().slice(11, 23);
-    ttsLogEl.textContent = `${t}  ${msg}\n` + ttsLogEl.textContent;
+    ttsLines.unshift(`${t}  ${msg}`);
+    if (ttsLines.length > 100) ttsLines.pop();
+    if (!ttsLogEl) mountTtsPanel();
+    if (ttsLogEl && !ttsLogEl._collapsed) ttsLogEl.textContent = ttsLines.join('\n');
   };
+  function mountTtsPanel() {
+    const wrap = document.createElement('div');
+    wrap.style.cssText =
+      'position:fixed;right:6px;bottom:6px;z-index:9999;width:min(82vw,340px);' +
+      'font:11px/1.3 ui-monospace,Menlo,monospace;background:#0b1020f2;color:#d6e2ff;' +
+      'border:1px solid #2a3a66;border-radius:8px;box-shadow:0 2px 10px #0008;';
+    const bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;gap:6px;align-items:center;padding:5px 7px;border-bottom:1px solid #2a3a66;';
+    const title = document.createElement('span');
+    title.textContent = 'TTS log';
+    title.style.cssText = 'flex:1;font-weight:600;opacity:.85;';
+    const mkBtn = (label) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.style.cssText = 'font:11px ui-monospace,monospace;padding:3px 7px;border:1px solid #3a4a7a;' +
+        'border-radius:6px;background:#1b2547;color:#d6e2ff;cursor:pointer;';
+      return b;
+    };
+    const copyBtn = mkBtn('copy'), clearBtn = mkBtn('clear'), hideBtn = mkBtn('–');
+    const body = document.createElement('div');
+    body.style.cssText = 'max-height:26vh;overflow:auto;white-space:pre-wrap;padding:6px 7px;';
+    bar.append(title, copyBtn, clearBtn, hideBtn);
+    wrap.append(bar, body);
+    document.body.appendChild(wrap);
+    ttsLogEl = body;
+    ttsLogEl._collapsed = false;
+    copyBtn.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(ttsLines.join('\n')); copyBtn.textContent = 'copied'; }
+      catch { /* select fallback */ const r = document.createRange(); r.selectNodeContents(body);
+        const s = getSelection(); s.removeAllRanges(); s.addRange(r); copyBtn.textContent = 'select+copy'; }
+      setTimeout(() => (copyBtn.textContent = 'copy'), 1200);
+    });
+    clearBtn.addEventListener('click', () => { ttsLines.length = 0; body.textContent = ''; });
+    hideBtn.addEventListener('click', () => {
+      ttsLogEl._collapsed = !ttsLogEl._collapsed;
+      body.style.display = ttsLogEl._collapsed ? 'none' : '';
+      hideBtn.textContent = ttsLogEl._collapsed ? '+' : '–';
+      if (!ttsLogEl._collapsed) body.textContent = ttsLines.join('\n');
+    });
+  }
   ttsDebug(`build=${TTS_BUILD} speaker=${!!speaker} iosVoice=${speaker?.hasArabicVoice}`);
 
   // iOS Safari blocks speech until it's first triggered inside a user gesture,
