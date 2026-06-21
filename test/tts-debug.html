@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>TTS debug · Palestinian Arabic Tutor</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body { font: 15px/1.45 -apple-system, system-ui, sans-serif; margin: 0; padding: 14px; }
+    h1 { font-size: 18px; margin: 0 0 8px; }
+    p.note { margin: 4px 0 12px; opacity: .8; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+    button { font-size: 16px; padding: 12px 14px; border-radius: 10px; border: 1px solid #888;
+             background: #2563eb; color: #fff; cursor: pointer; flex: 1 1 auto; min-width: 140px; }
+    button.alt { background: #6b7280; }
+    button.warn { background: #b45309; }
+    label { display: block; margin: 10px 0 4px; font-weight: 600; }
+    input, select, textarea { width: 100%; font-size: 16px; padding: 10px; border-radius: 8px;
+             border: 1px solid #888; background: Canvas; color: CanvasText; }
+    textarea { min-height: 56px; }
+    #state { font-family: ui-monospace, Menlo, monospace; font-size: 13px; margin: 8px 0; }
+    #log { font-family: ui-monospace, Menlo, monospace; font-size: 12px; white-space: pre-wrap;
+           background: #0b1020; color: #d6e2ff; border-radius: 10px; padding: 10px;
+           max-height: 46vh; overflow: auto; }
+    .pill { display: inline-block; padding: 1px 7px; border-radius: 999px; background: #1118; }
+  </style>
+</head>
+<body>
+  <h1>🔊 TTS debug</h1>
+  <p class="note">Tap <b>1) Unlock</b> first (a real tap is required on iOS), then try the others.
+     <b>4) Speak after 2s</b> is the important one — it mimics how a reply actually plays (from a
+     network callback, <i>not</i> a tap). If 3 works but 4 is silent, iOS is blocking out-of-gesture speech.</p>
+
+  <label for="voice">Voice (<span id="vcount">0</span> total)</label>
+  <select id="voice"></select>
+
+  <label for="text">Text to speak</label>
+  <textarea id="text">مرحبا، كيف حالك اليوم؟</textarea>
+
+  <div class="row">
+    <button id="btn-unlock">1) Unlock</button>
+    <button id="btn-resume" class="alt">resume()</button>
+    <button id="btn-cancel" class="alt">cancel()</button>
+  </div>
+  <div class="row">
+    <button id="btn-raw">2) Raw speak (in tap)</button>
+    <button id="btn-speaker">3) Speaker.speak (in tap)</button>
+  </div>
+  <div class="row">
+    <button id="btn-delayed" class="warn">4) Speak after 2s (out of gesture)</button>
+    <button id="btn-en" class="alt">5) Speak English test</button>
+  </div>
+
+  <div id="state"></div>
+  <div class="row">
+    <button id="btn-clear" class="alt">clear log</button>
+    <button id="btn-copy" class="alt">copy log</button>
+  </div>
+  <div id="log"></div>
+
+  <script type="module">
+    import { Speaker } from '../js/tts.js';
+
+    const $ = (id) => document.getElementById(id);
+    const logEl = $('log');
+    const lines = [];
+    const log = (m) => {
+      const t = new Date().toISOString().slice(11, 23);
+      lines.unshift(`${t}  ${m}`);
+      if (lines.length > 200) lines.pop();
+      logEl.textContent = lines.join('\n');
+    };
+
+    // Surface anything that would otherwise be invisible on iOS.
+    window.addEventListener('error', (e) => log('window error: ' + (e.message || e)));
+    window.addEventListener('unhandledrejection', (e) => log('unhandledrejection: ' + (e.reason?.message || e.reason)));
+
+    const synth = window.speechSynthesis;
+    if (!synth) { log('❌ speechSynthesis NOT available'); }
+
+    const ua = navigator.userAgent;
+    log('UA: ' + ua);
+    log('platform=' + navigator.platform + ' touchPoints=' + navigator.maxTouchPoints);
+
+    const voiceSel = $('voice');
+    function fillVoices() {
+      const voices = synth.getVoices();
+      $('vcount').textContent = String(voices.length);
+      voiceSel.innerHTML = '';
+      // Arabic first, then the rest.
+      const arabic = voices.filter((v) => /^ar/i.test(v.lang));
+      const rest = voices.filter((v) => !/^ar/i.test(v.lang));
+      for (const v of [...arabic, ...rest]) {
+        const o = document.createElement('option');
+        o.value = v.voiceURI;
+        o.textContent = `${v.lang} · ${v.name}${v.default ? ' (default)' : ''}${v.localService ? '' : ' [remote]'}`;
+        voiceSel.appendChild(o);
+      }
+      if (arabic.length) { voiceSel.value = arabic[0].voiceURI; log('Arabic voices: ' + arabic.map(v => v.lang + ':' + v.name).join(', ')); }
+      else log('⚠️ NO Arabic voice installed on this device');
+    }
+    fillVoices();
+    synth.onvoiceschanged = () => { log('onvoiceschanged fired'); fillVoices(); };
+
+    function pickedVoice() {
+      return synth.getVoices().find((v) => v.voiceURI === voiceSel.value) || null;
+    }
+
+    function showState() {
+      $('state').innerHTML =
+        `<span class="pill">speaking: ${synth.speaking}</span> ` +
+        `<span class="pill">pending: ${synth.pending}</span> ` +
+        `<span class="pill">paused: ${synth.paused}</span>`;
+    }
+    setInterval(showState, 400);
+    showState();
+
+    // ---- Raw Web Speech API speak (bypasses the Speaker class) ----
+    function rawSpeak(text, label) {
+      try {
+        synth.resume();
+        synth.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        const v = pickedVoice();
+        if (v) u.voice = v;
+        u.lang = v?.lang || 'ar-SA';
+        u.rate = 0.9;
+        u.onstart = () => log(`[${label}] ▶ onstart (voice=${u.voice?.name || 'default'} lang=${u.lang})`);
+        u.onboundary = (e) => log(`[${label}] · boundary @${e.charIndex}`);
+        u.onend = () => log(`[${label}] ✓ onend`);
+        u.onerror = (e) => log(`[${label}] ❌ onerror: ${e.error}`);
+        u.onpause = () => log(`[${label}] ⏸ onpause`);
+        u.onresume = () => log(`[${label}] ⏵ onresume`);
+        synth.speak(u);
+        log(`[${label}] speak() called — speaking=${synth.speaking} pending=${synth.pending} paused=${synth.paused}`);
+      } catch (e) { log(`[${label}] threw: ${e?.message || e}`); }
+    }
+
+    // ---- Speaker class (the real app path) ----
+    const speaker = new Speaker();
+    speaker.ready.then(() => log('Speaker.ready resolved — hasArabicVoice=' + speaker.hasArabicVoice));
+
+    $('btn-unlock').addEventListener('click', () => { speaker.unlock(); log('1) unlock() called'); });
+    $('btn-resume').addEventListener('click', () => { synth.resume(); log('resume() called'); });
+    $('btn-cancel').addEventListener('click', () => { synth.cancel(); log('cancel() called'); });
+
+    $('btn-raw').addEventListener('click', () => rawSpeak($('text').value, 'RAW'));
+
+    $('btn-speaker').addEventListener('click', async () => {
+      log('3) Speaker.speak (in tap) …');
+      await speaker.speak($('text').value, {
+        onStart: () => log('3) Speaker onStart'),
+        onEnd: () => log('3) Speaker onEnd'),
+      });
+    });
+
+    $('btn-delayed').addEventListener('click', () => {
+      log('4) scheduled out-of-gesture speak in 2s (tap nothing) …');
+      setTimeout(() => {
+        log('4) firing now (no active user gesture)');
+        rawSpeak($('text').value, 'DELAYED-RAW');
+      }, 2000);
+    });
+
+    $('btn-en').addEventListener('click', () => rawSpeak('Hello, this is an English test.', 'EN'));
+
+    $('btn-clear').addEventListener('click', () => { lines.length = 0; logEl.textContent = ''; });
+    $('btn-copy').addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(lines.join('\n')); log('log copied'); }
+      catch (e) { log('copy failed: ' + (e?.message || e)); }
+    });
+  </script>
+</body>
+</html>
