@@ -53,12 +53,22 @@ export class Speaker {
   // life. iOS Safari 16.4+ lets us reclaim the speaker for output by setting the
   // audio session type to 'playback'. Only call this right before speaking —
   // 'playback' is output-only and would block mic capture (pairing/recording).
-  // Safe no-op where the API is absent.
+  // Safe no-op where the API is absent. Returns true if it *changed* the
+  // category (the iOS audio route then needs a moment to settle before speech).
   _claimAudioOutput() {
     try {
       const s = navigator.audioSession;
-      if (s && s.type !== 'playback') s.type = 'playback';
+      if (s && s.type !== 'playback') { s.type = 'playback'; return true; }
     } catch { /* noop */ }
+    return false;
+  }
+
+  // Public: proactively switch the audio session to output mode. Call this from
+  // lifecycle events (connection opened, recording stopped) so the route is
+  // already 'playback' and settled by the time a reply needs to be spoken —
+  // iOS drops the first utterance issued during the category switch itself.
+  claimOutput() {
+    return this._claimAudioOutput();
   }
 
   // iOS Safari refuses to speak unless speechSynthesis was first triggered from
@@ -89,7 +99,7 @@ export class Speaker {
     // The pattern proven to work on iOS (out-of-gesture, after a recent unlock):
     // resume() → cancel() → speak(). Skipping cancel() leaves the reply stuck
     // behind an idle/parked synth and it never starts.
-    this._claimAudioOutput();
+    const switched = this._claimAudioOutput();
     speechSynthesis.resume();
     speechSynthesis.cancel();
 
@@ -111,10 +121,18 @@ export class Speaker {
       u.onend = finish;
       u.onerror = (e) => { onError?.(e); finish(); };
 
-      speechSynthesis.speak(u);
-      // iOS sometimes parks the synth in a paused state right after speak();
-      // a follow-up resume() nudges it into actually starting.
-      if (IS_IOS) speechSynthesis.resume();
+      const fire = () => {
+        speechSynthesis.speak(u);
+        // iOS sometimes parks the synth in a paused state right after speak();
+        // a follow-up resume() nudges it into actually starting.
+        if (IS_IOS) speechSynthesis.resume();
+      };
+
+      // If we just flipped the audio category, iOS drops an utterance fired
+      // mid-switch. Give the route a moment to settle first (lifecycle hooks
+      // usually switch ahead of time, so this branch rarely runs).
+      if (switched && IS_IOS) setTimeout(fire, 300);
+      else fire();
     });
   }
 

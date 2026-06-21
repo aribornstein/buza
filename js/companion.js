@@ -216,7 +216,7 @@ async function initClient() {
 
   // On-screen TTS debug overlay (iOS has no console). Always on for now while we
   // chase the no-audio bug; the version stamp confirms which code is running.
-  const TTS_BUILD = 'tts-debug-2026-06-21g';
+  const TTS_BUILD = 'tts-debug-2026-06-21h';
   let ttsLogEl = null;
   const ttsLines = [];
   const ttsDebug = (msg) => {
@@ -353,6 +353,11 @@ async function initClient() {
     setProgress(1);
     try { sonic?.destroy(); } catch { /* noop */ }
     try { sonicTx?.destroy(); } catch { /* noop */ }
+    // Pairing held the mic (record session); now that it's released, switch to
+    // output mode ahead of the first reply so iOS has the route settled by the
+    // time we speak (a category switch *during* speak() drops the utterance).
+    speaker?.claimOutput();
+    ttsDebug(`open → claimOutput audioSession=${navigator.audioSession?.type || 'n/a'}`);
     $('signal-panel').classList.add('hidden');
     $('app-panel').classList.remove('hidden');
     setStatus('Connected — say or type something in Arabic!');
@@ -427,6 +432,9 @@ async function initClient() {
     const done = new Promise((r) => (recorder.onstop = r));
     recorder.stop(); await done;
     stream.getTracks().forEach((t) => t.stop());
+    // Mic is released; hand the audio session back to output mode now so the
+    // route is settled before the gateway's spoken reply arrives.
+    speaker?.claimOutput();
     const blob = new Blob(chunks, { type: recorder.mimeType });
     recorder = null; micBtn.classList.remove('recording'); setStatus('Transcribing on the gateway…');
     peer.send({ type: 'dialect', value: $('dialect-select').value });
