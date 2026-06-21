@@ -205,7 +205,7 @@ async function initClient() {
 
   // On-screen TTS debug overlay (iOS has no console). Always on for now while we
   // chase the no-audio bug; the version stamp confirms which code is running.
-  const TTS_BUILD = 'tts-debug-2026-06-21c';
+  const TTS_BUILD = 'tts-debug-2026-06-21d';
   let ttsLogEl = null;
   const ttsLines = [];
   const ttsDebug = (msg) => {
@@ -262,7 +262,7 @@ async function initClient() {
   // cheap no-op once primed and won't interrupt a reply that's playing).
   const unlockTTS = () => {
     speaker?.unlock();
-    ttsDebug(`tap → unlock() warm=${speaker?._warm} synth.speaking=${speechSynthesis.speaking}`);
+    ttsDebug(`tap → unlock() synth.speaking=${speechSynthesis.speaking} pending=${speechSynthesis.pending}`);
   };
   window.addEventListener('pointerdown', unlockTTS);
 
