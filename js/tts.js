@@ -9,7 +9,8 @@ export class Speaker {
   constructor() {
     this.voice = null;
     this._unlocked = false;
-    this._keepAlive = null;
+    this._warm = false;       // iOS: synth kept perpetually active after unlock
+    this._warmTimer = null;   // fallback re-prime timer
     this.ready = this._pickVoice();
   }
 
@@ -50,20 +51,55 @@ export class Speaker {
   get hasArabicVoice() { this._ensureVoice(); return !!this.voice; }
 
   // iOS Safari refuses to speak unless speechSynthesis was first invoked from
-  // inside a user gesture. Call this from a tap/click once so later
-  // network-triggered replies are allowed to play. We speak a real (near-silent)
-  // utterance — a volume:0 one does NOT reliably grant permission on iOS.
+  // inside a user gesture, AND that permission only lasts a brief window after
+  // the gesture — once the synth goes idle it re-locks, so a reply arriving
+  // 5–30s later (after the gateway responds) is silently dropped. To survive
+  // that gap we keep the synth perpetually "warm": after the first gesture we
+  // chain near-silent utterances so it never goes idle and out-of-gesture
+  // replies can always queue onto a live synth. Call this from a tap/click.
   unlock() {
     try {
       speechSynthesis.resume();
-      // Don't disturb a reply that's already playing.
-      if (speechSynthesis.speaking || speechSynthesis.pending) return;
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance('\u200b'); // zero-width space
-      u.volume = 0.01;
-      u.rate = 10; // finish instantly
-      speechSynthesis.speak(u);
       this._unlocked = true;
+      if (IS_IOS) {
+        this._startWarm();
+      } else if (!speechSynthesis.speaking && !speechSynthesis.pending) {
+        // Desktop just needs a one-shot prime.
+        const u = new SpeechSynthesisUtterance('\u200b');
+        u.volume = 0.01;
+        u.rate = 10;
+        speechSynthesis.speak(u);
+      }
+    } catch { /* noop */ }
+  }
+
+  // Begin (or re-assert) the perpetual silent loop that keeps iOS's synth
+  // permission alive. Must be kicked off from inside a user gesture.
+  _startWarm() {
+    speechSynthesis.resume();
+    if (this._warm) return;
+    this._warm = true;
+    this._queueSilent();
+  }
+
+  // Speak one near-silent utterance and re-queue another when it finishes, so
+  // `speechSynthesis.speaking` stays true indefinitely. A real reply spoken
+  // out-of-gesture then queues right behind the current silent chunk and plays.
+  _queueSilent() {
+    if (!this._warm) return;
+    try {
+      speechSynthesis.resume();
+      const s = new SpeechSynthesisUtterance('\u200b'); // zero-width space
+      s.volume = 0;
+      s.rate = 1;
+      const next = () => {
+        if (!this._warm) return;
+        // Re-queue on the next tick so we don't tight-loop if it ends instantly.
+        this._warmTimer = setTimeout(() => this._queueSilent(), 250);
+      };
+      s.onend = next;
+      s.onerror = next;
+      speechSynthesis.speak(s);
     } catch { /* noop */ }
   }
 
@@ -73,7 +109,11 @@ export class Speaker {
     await Promise.race([this.ready, new Promise((r) => setTimeout(r, 1500))]);
     this._ensureVoice();
 
-    speechSynthesis.cancel();
+    // On iOS, if we're warm, do NOT cancel — cancel() drops the synth to idle
+    // and a fresh out-of-gesture speak() is silently ignored. Just queue the
+    // reply onto the already-active synth (it plays right after the current
+    // silent chunk). On desktop, cancel to interrupt any previous utterance.
+    if (!(IS_IOS && this._warm)) speechSynthesis.cancel();
     // iOS parks the synth in a paused state; without resume() speak() is silent.
     speechSynthesis.resume();
 
@@ -87,7 +127,6 @@ export class Speaker {
       u.pitch = 1.0;
 
       const finish = () => {
-        this._stopKeepAlive();
         onEnd?.();
         resolve();
       };
@@ -97,22 +136,18 @@ export class Speaker {
       u.onerror = finish;
 
       speechSynthesis.speak(u);
-      // iOS suspends long utterances after ~15s; nudge it to keep going.
-      if (IS_IOS) this._startKeepAlive();
+      // Ensure the warm loop is running so this (and future) replies stay alive.
+      if (IS_IOS && this._warm) this._queueSilent();
     });
   }
 
-  _startKeepAlive() {
-    this._stopKeepAlive();
-    this._keepAlive = setInterval(() => {
-      if (speechSynthesis.speaking) { speechSynthesis.pause(); speechSynthesis.resume(); }
-      else this._stopKeepAlive();
-    }, 8000);
+  stop() {
+    // Stop the audible reply but keep the synth warm so the next out-of-gesture
+    // reply can still play. Stopping warm entirely would re-lock iOS speech.
+    speechSynthesis.cancel();
+    if (IS_IOS && this._warm) {
+      speechSynthesis.resume();
+      this._queueSilent();
+    }
   }
-
-  _stopKeepAlive() {
-    if (this._keepAlive) { clearInterval(this._keepAlive); this._keepAlive = null; }
-  }
-
-  stop() { this._stopKeepAlive(); speechSynthesis.cancel(); }
 }

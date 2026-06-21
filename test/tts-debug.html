@@ -51,6 +51,9 @@
     <button id="btn-delayed" class="warn">4) Speak after 2s (out of gesture)</button>
     <button id="btn-en" class="alt">5) Speak English test</button>
   </div>
+  <div class="row">
+    <button id="btn-warm" class="warn">6) Warm test: Speaker.speak after 15s (don't tap)</button>
+  </div>
 
   <div id="state"></div>
   <div class="row">
@@ -164,6 +167,20 @@
     });
 
     $('btn-en').addEventListener('click', () => rawSpeak('Hello, this is an English test.', 'EN'));
+
+    // The real fix: tap once (starts the warm loop), then a reply arriving 15s
+    // later — with NO active gesture — must still play. This is what the app does.
+    $('btn-warm').addEventListener('click', () => {
+      speaker.unlock(); // starts/keeps the warm loop from this gesture
+      log('6) warm loop started — waiting 15s, do NOT tap the screen …');
+      setTimeout(async () => {
+        log('6) firing Speaker.speak now (15s later, out of gesture)');
+        await speaker.speak($('text').value, {
+          onStart: () => log('6) ▶ Speaker onStart (warm worked!)'),
+          onEnd: () => log('6) ✓ Speaker onEnd'),
+        });
+      }, 15000);
+    });
 
     $('btn-clear').addEventListener('click', () => { lines.length = 0; logEl.textContent = ''; });
     $('btn-copy').addEventListener('click', async () => {
