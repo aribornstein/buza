@@ -203,9 +203,10 @@ async function initClient() {
     speaker = new Speaker();
   } catch (e) { console.warn('Speech synthesis unavailable:', e); }
 
-  // iOS Safari blocks speech until it's first triggered inside a user gesture.
-  // Unlock on the very first tap (e.g. the pairing button) so later replies talk.
-  const unlockTTS = () => { speaker?.unlock(); window.removeEventListener('pointerdown', unlockTTS); };
+  // iOS Safari blocks speech until it's first triggered inside a user gesture,
+  // and can re-pause the synth later. Re-assert on every tap (unlock() is a
+  // cheap no-op once primed and won't interrupt a reply that's playing).
+  const unlockTTS = () => speaker?.unlock();
   window.addEventListener('pointerdown', unlockTTS);
 
   // 3) Accept the gateway's answer.

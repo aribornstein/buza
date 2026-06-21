@@ -40,6 +40,14 @@ const speaker = new Speaker();
 let loaded = false;
 let busy = false;
 let recording = false;
+let forceLocalLoad = false; // set after a preflight warning so a 2nd click overrides
+
+// The Gemma-4 E2B weights are ~2GB once on the GPU. iOS/iPadOS Safari caps the
+// WebGPU process memory well below that (observed OOM ≈1.3GB on a device whose
+// maxBufferSize is 1024MB), so the standalone path can't hold the model there.
+// We use maxBufferSize as a proxy for the device's GPU memory budget.
+const MODEL_GPU_BYTES = 2.0 * 1024 * 1024 * 1024;
+
 
 function setStatus(state, text) {
   statusDot.className = state;
@@ -99,6 +107,23 @@ async function loadEverything() {
     const probe = await probeWebGPU(diag.emit);
     gpuLimits = probe?.limits || null;
   } catch (e) { console.warn('diag unavailable', e); }
+
+  // Preflight: bail out before the doomed ~2GB download on a GPU that can't hold
+  // the model (iOS/iPadOS Safari). A first click warns + offers companion mode;
+  // a second click forces the attempt anyway.
+  const maxBuf = Number(gpuLimits?.maxBufferSize) || 0;
+  if (maxBuf && maxBuf < MODEL_GPU_BYTES * 1.1 && !forceLocalLoad) {
+    const mb = Math.round(maxBuf / 1048576);
+    diag.emit(`PREFLIGHT: maxBufferSize ${mb}MB < model ~2GB — standalone won't fit on this GPU`);
+    diag.stage('preflight: insufficient GPU memory');
+    loader.classList.add('hidden');
+    loadBtn.disabled = false;
+    forceLocalLoad = true; // allow a second Load click to override
+    $('mode-picker')?.classList.remove('hidden');
+    setStatus('idle', 'This device’s GPU is too small to run the model locally.');
+    addMessage('system', `⚠️ This device’s GPU memory (~${mb}MB) is too small to run the ~2GB model on its own — it crashes partway through loading. Use a companion device: keep this device as a light client and let a laptop/desktop run the AI. (Or tap Load again to try anyway.)`);
+    return;
+  }
 
   try {
     diag.stage('load Gemma-4 weights + warmup');
