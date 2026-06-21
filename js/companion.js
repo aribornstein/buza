@@ -51,6 +51,17 @@ function arqRto(link) { return link.airtimeMs(1) + 2500; }
 
 const mbStr = (n) => (typeof n === 'number' ? (n / 1048576).toFixed(0) + 'MB' : '?');
 
+// iOS: speaking a reply forces the audio session to 'playback' (output-only),
+// which then blocks mic capture. Call this right before any getUserMedia (sonic
+// pairing or push-to-talk) to hand the mic back. No-op where unsupported / not
+// previously forced to playback.
+function allowMicAudioSession() {
+  try {
+    const s = navigator.audioSession;
+    if (s && s.type === 'playback') s.type = 'play-and-record';
+  } catch { /* noop */ }
+}
+
 // Re-encode a recorded clip into a 16 kHz mono WAV. The client records WebM/Opus
 // (e.g. on Chrome), which some gateway browsers (notably iOS Safari) cannot
 // decode. Decoding happens here, in the browser that produced the clip, and the WAV we
@@ -205,7 +216,7 @@ async function initClient() {
 
   // On-screen TTS debug overlay (iOS has no console). Always on for now while we
   // chase the no-audio bug; the version stamp confirms which code is running.
-  const TTS_BUILD = 'tts-debug-2026-06-21f';
+  const TTS_BUILD = 'tts-debug-2026-06-21g';
   let ttsLogEl = null;
   const ttsLines = [];
   const ttsDebug = (msg) => {
@@ -307,6 +318,7 @@ async function initClient() {
     try {
       await sonic.init();
       await sonicTx.init();
+      allowMicAudioSession(); // iOS: ensure the mic isn't locked out by a prior 'playback'
       const arq = new StopWaitARQ({ send: (b, p) => sonicTx.send(b, p), role: 0, rtoMs: arqRto(sonicTx) });
       arq.onData = async (payload) => { // the gateway's answer arrived (and was auto-ACKed)
         if (received || connected) return;
@@ -375,7 +387,7 @@ async function initClient() {
           onEnd: () => ttsDebug('✓ onEnd'),
           onError: (e) => ttsDebug('❌ onError: ' + (e?.error || e)),
         });
-        setTimeout(() => ttsDebug(`+300ms synth(speaking=${speechSynthesis.speaking} pending=${speechSynthesis.pending} paused=${speechSynthesis.paused})`), 300);
+        setTimeout(() => ttsDebug(`+300ms synth(speaking=${speechSynthesis.speaking} pending=${speechSynthesis.pending} paused=${speechSynthesis.paused}) audioSession=${navigator.audioSession?.type || 'n/a'}`), 300);
       }
     }
   });
@@ -402,6 +414,7 @@ async function initClient() {
   const micBtn = $('mic-btn');
   const startRec = async () => {
     if (recorder) return;
+    allowMicAudioSession(); // iOS: undo any prior 'playback' lock so the mic works
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     chunks = [];
     recorder = new MediaRecorder(stream);

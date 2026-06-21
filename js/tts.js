@@ -51,7 +51,9 @@ export class Speaker {
   // On iOS, using the mic (e.g. pairing by sound) switches the audio session to
   // a record category that mutes speechSynthesis for the rest of the page's
   // life. iOS Safari 16.4+ lets us reclaim the speaker for output by setting the
-  // audio session type to 'playback'. Safe no-op where the API is absent.
+  // audio session type to 'playback'. Only call this right before speaking —
+  // 'playback' is output-only and would block mic capture (pairing/recording).
+  // Safe no-op where the API is absent.
   _claimAudioOutput() {
     try {
       const s = navigator.audioSession;
@@ -66,7 +68,6 @@ export class Speaker {
   // real utterance (volume:0 utterances are skipped by iOS and don't count).
   unlock() {
     try {
-      this._claimAudioOutput();
       speechSynthesis.resume();
       this._unlocked = true;
       // Don't interrupt a reply that's currently playing.
