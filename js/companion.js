@@ -214,80 +214,10 @@ async function initClient() {
     speaker = new Speaker();
   } catch (e) { console.warn('Speech synthesis unavailable:', e); }
 
-  // On-screen TTS debug overlay (iOS has no console). Always on for now while we
-  // chase the no-audio bug; the version stamp confirms which code is running.
-  const TTS_BUILD = 'tts-debug-2026-06-21k';
-  let ttsLogEl = null;
-  const ttsLines = [];
-  const ttsDebug = (msg) => {
-    const t = new Date().toISOString().slice(11, 23);
-    ttsLines.unshift(`${t}  ${msg}`);
-    if (ttsLines.length > 100) ttsLines.pop();
-    if (!ttsLogEl) mountTtsPanel();
-    if (ttsLogEl && !ttsLogEl._collapsed) ttsLogEl.textContent = ttsLines.join('\n');
-  };
-  function mountTtsPanel() {
-    const wrap = document.createElement('div');
-    wrap.style.cssText =
-      'position:fixed;right:6px;bottom:6px;z-index:9999;width:min(82vw,340px);' +
-      'font:11px/1.3 ui-monospace,Menlo,monospace;background:#0b1020f2;color:#d6e2ff;' +
-      'border:1px solid #2a3a66;border-radius:8px;box-shadow:0 2px 10px #0008;';
-    const bar = document.createElement('div');
-    bar.style.cssText = 'display:flex;gap:6px;align-items:center;padding:5px 7px;border-bottom:1px solid #2a3a66;';
-    const title = document.createElement('span');
-    title.textContent = 'TTS log';
-    title.style.cssText = 'flex:1;font-weight:600;opacity:.85;';
-    const mkBtn = (label) => {
-      const b = document.createElement('button');
-      b.textContent = label;
-      b.style.cssText = 'font:11px ui-monospace,monospace;padding:3px 7px;border:1px solid #3a4a7a;' +
-        'border-radius:6px;background:#1b2547;color:#d6e2ff;cursor:pointer;';
-      return b;
-    };
-    const copyBtn = mkBtn('copy'), clearBtn = mkBtn('clear'), hideBtn = mkBtn('–');
-    const testBtn = mkBtn('🔊test');
-    const body = document.createElement('div');
-    body.style.cssText = 'max-height:26vh;overflow:auto;white-space:pre-wrap;padding:6px 7px;';
-    bar.append(title, testBtn, copyBtn, clearBtn, hideBtn);
-    wrap.append(bar, body);
-    document.body.appendChild(wrap);
-    ttsLogEl = body;
-    ttsLogEl._collapsed = false;
-    // Speak from a DIRECT tap inside this page. If this is silent too, the issue
-    // is environmental (audio session muted by the mic), not the gesture window.
-    testBtn.addEventListener('click', () => {
-      ttsDebug(`🔊test tap: synth(speaking=${speechSynthesis.speaking} pending=${speechSynthesis.pending} paused=${speechSynthesis.paused})`);
-      speaker?.speak('مَرحَبا، هَذا اختِبار', {
-        onStart: () => ttsDebug('🔊test ▶ onStart'),
-        onEnd: () => ttsDebug('🔊test ✓ onEnd'),
-        onError: (e) => ttsDebug('🔊test ❌ onError: ' + (e?.error || e)),
-      });
-    });
-    copyBtn.addEventListener('click', async () => {
-      try { await navigator.clipboard.writeText(ttsLines.join('\n')); copyBtn.textContent = 'copied'; }
-      catch { /* select fallback */ const r = document.createRange(); r.selectNodeContents(body);
-        const s = getSelection(); s.removeAllRanges(); s.addRange(r); copyBtn.textContent = 'select+copy'; }
-      setTimeout(() => (copyBtn.textContent = 'copy'), 1200);
-    });
-    clearBtn.addEventListener('click', () => { ttsLines.length = 0; body.textContent = ''; });
-    hideBtn.addEventListener('click', () => {
-      ttsLogEl._collapsed = !ttsLogEl._collapsed;
-      body.style.display = ttsLogEl._collapsed ? 'none' : '';
-      hideBtn.textContent = ttsLogEl._collapsed ? '+' : '–';
-      if (!ttsLogEl._collapsed) body.textContent = ttsLines.join('\n');
-    });
-  }
-  ttsDebug(`build=${TTS_BUILD} speaker=${!!speaker} iosVoice=${speaker?.hasArabicVoice}`);
-  ttsDebug(`audioSession=${navigator.audioSession ? navigator.audioSession.type : 'unsupported'}`);
-
   // iOS Safari blocks speech until it's first triggered inside a user gesture,
   // and can re-pause the synth later. Re-assert on every tap (unlock() is a
   // cheap no-op once primed and won't interrupt a reply that's playing).
-  const unlockTTS = () => {
-    speaker?.unlock();
-    ttsDebug(`tap → unlock() synth.speaking=${speechSynthesis.speaking} audioSession=${navigator.audioSession?.type || 'n/a'}`);
-  };
-  window.addEventListener('pointerdown', unlockTTS);
+  window.addEventListener('pointerdown', () => speaker?.unlock());
 
   // 3) Accept the gateway's answer.
   $('apply-remote').addEventListener('click', async () => {
@@ -357,7 +287,6 @@ async function initClient() {
     // output mode ahead of the first reply so iOS has the route settled by the
     // time we speak (a category switch *during* speak() drops the utterance).
     speaker?.claimOutput();
-    ttsDebug(`open → claimOutput audioSession=${navigator.audioSession?.type || 'n/a'}`);
     $('signal-panel').classList.add('hidden');
     $('app-panel').classList.remove('hidden');
     playWelcome();
@@ -381,17 +310,8 @@ async function initClient() {
       avatar?.setSpeaking(false);
       currentEl = null;
       const ar = m.parsed?.ar || '';
-      ttsDebug(`final: speaker=${!!speaker} toggle=${$('speak-toggle').checked} arLen=${ar.length} ` +
-        `synth(speaking=${speechSynthesis.speaking} pending=${speechSynthesis.pending} paused=${speechSynthesis.paused})`);
       if (speaker && $('speak-toggle').checked && ar) {
-        ttsDebug('→ calling speaker.speak()');
-        speaker.speak(ar, {
-          onStart: () => ttsDebug('▶ onStart'),
-          onBoundary: () => avatar?.pulse(1),
-          onEnd: () => ttsDebug('✓ onEnd'),
-          onError: (e) => ttsDebug('❌ onError: ' + (e?.error || e)),
-        });
-        setTimeout(() => ttsDebug(`+300ms synth(speaking=${speechSynthesis.speaking} pending=${speechSynthesis.pending} paused=${speechSynthesis.paused}) audioSession=${navigator.audioSession?.type || 'n/a'}`), 300);
+        speaker.speak(ar, { onBoundary: () => avatar?.pulse(1) });
       }
     }
   });
@@ -410,7 +330,7 @@ async function initClient() {
     if (!text) return;
     // iOS: this click/Enter is a user gesture — start a near-silent keep-alive so
     // the engine stays warm until the reply arrives and can be spoken.
-    if (speaker && $('speak-toggle').checked) { speaker.hold(); ttsDebug('send → hold()'); }
+    if (speaker && $('speak-toggle').checked) speaker.hold();
     addMessage('user', text);
     peer.send({ type: 'text', text, dialect: $('dialect-select').value });
     $('text-input').value = '';
@@ -439,7 +359,7 @@ async function initClient() {
     speaker?.claimOutput();
     // Still within the mic-release gesture window: start a near-silent keep-alive
     // so the engine stays warm until the (out-of-gesture) reply can be spoken.
-    if (speaker && $('speak-toggle').checked) { speaker.hold(); ttsDebug('mic release → hold()'); }
+    if (speaker && $('speak-toggle').checked) speaker.hold();
     const blob = new Blob(chunks, { type: recorder.mimeType });
     recorder = null; micBtn.classList.remove('recording'); setStatus('Transcribing on the gateway…');
     peer.send({ type: 'dialect', value: $('dialect-select').value });
@@ -461,11 +381,9 @@ async function initClient() {
   }
   function setStatus(t) { $('status-text').textContent = t; }
 
-  // On connect, greet the learner out loud BEFORE enabling input. Besides being
-  // friendly, speaking here "warms" the iOS audio route right after the session
-  // switches to playback, so the first real reply isn't the utterance that gets
-  // dropped during the category change. The composer is re-enabled when the
-  // greeting ends (or after a safety timeout, so input is never left disabled).
+  // On connect, greet the learner: render the intro and (where the platform
+  // allows out-of-gesture speech, e.g. desktop/Quest) speak it. iOS stays silent
+  // until the first user gesture, so we never block input waiting on it.
   let welcomed = false;
   function playWelcome() {
     if (welcomed) return;
@@ -476,32 +394,11 @@ async function initClient() {
       en: "Welcome! I'm your Arabic teacher. Let's begin.",
     };
     renderTutor(addMessage('tutor', ''), WELCOME);
-
-    enableComposer(false);
-    setStatus('Greeting you…');
-    let enabled = false;
-    const enable = () => {
-      if (enabled) return;
-      enabled = true;
-      setStatus('Connected — say or type something in Arabic!');
-      enableComposer(true);
-    };
-
+    setStatus('Connected — say or type something in Arabic!');
+    enableComposer(true);
     if (speaker && $('speak-toggle').checked) {
-      // claimOutput() just switched the session to playback; give the iOS audio
-      // route a moment to settle before the utterance so it isn't dropped.
-      setTimeout(() => {
-        ttsDebug('welcome → speak()');
-        speaker.speak(WELCOME.ar, {
-          onStart: () => ttsDebug('welcome ▶ onStart'),
-          onEnd: () => { ttsDebug('welcome ✓ onEnd'); enable(); },
-          onError: (e) => { ttsDebug('welcome ❌ ' + (e?.error || e)); enable(); },
-        });
-        // Fallback: never leave the composer disabled if no speech events fire.
-        setTimeout(enable, 6000);
-      }, 500);
-    } else {
-      enable();
+      // Small delay lets the audio route settle after claimOutput().
+      setTimeout(() => speaker.speak(WELCOME.ar, { onBoundary: () => avatar?.pulse(1) }), 500);
     }
   }
   function addMessage(roleName, content) {
